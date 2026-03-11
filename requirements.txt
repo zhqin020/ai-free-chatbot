@@ -1,0 +1,6 @@
+fastapi==0.115.2
+uvicorn==0.30.6
+playwright==1.48.0
+sqlalchemy==2.0.35
+pydantic==2.9.2
+python-dotenv==1.0.1

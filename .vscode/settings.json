@@ -1,0 +1,49 @@
+{
+    "chat.promptFilesRecommendations": {
+        "speckit.constitution": true,
+        "speckit.specify": true,
+        "speckit.plan": true,
+        "speckit.tasks": true,
+        "speckit.implement": true
+    },
+    "chat.tools.terminal.autoApprove": {
+        ".specify/scripts/bash/": true,
+        ".specify/scripts/powershell/": true
+    },
+    "editor.wordWrap": "on",
+    "python.terminal.activateEnvironment": true,
+    "python.defaultInterpreterPath": "/home/watson/miniconda3/envs/aifree/bin/python",
+    "python.terminal.activateEnvInCurrentTerminal": true,
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "terminal.integrated.profiles.linux": {
+        "bash": {
+            "path": "bash",
+            "args": [
+                "--init-file",
+                "${workspaceFolder}/.vscode/terminal-init.sh"
+            ]
+        }
+    },
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "dbcode.connections": [
+        {
+            "connectionId": "sPTABY5aG-DUFGk1ayCGJ",
+            "name": "local-crypto",
+            "driver": "postgres",
+            "color": "#007D5D",
+            "connectionType": "host",
+            "host": "localhost",
+            "port": 5432,
+            "ssl": false,
+            "authMethod": "password",
+            "username": "crypto_user",
+            "password": "",
+            "savePassword": "secretStorage",
+            "database": "aifree_crypto",
+            "readOnly": false,
+            "postConnectionSqlType": "inline",
+            "connectionTimeout": 30
+        }
+    ],
+    "workbench.browser.enableChatTools": true
+}
