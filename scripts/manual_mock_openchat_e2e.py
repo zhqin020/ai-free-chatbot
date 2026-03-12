@@ -96,6 +96,32 @@ def _extract_json_from_text(text: str) -> dict[str, object]:
         return payload
 
 
+def _normalize_case_status(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    normalized = text.lower().replace("_", "-").replace(" ", "")
+    if normalized in {"closed", "结案"}:
+        return "Closed"
+    if normalized in {"on-going", "ongoing", "正在进行"}:
+        return "On-Going"
+    return text
+
+
+def _normalize_hearing(value: object) -> str | None:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+    if text in {"yes", "y", "true", "1", "是", "有", "开庭", "需要庭审", "需庭审", "庭审"}:
+        return "true"
+    if text in {"no", "n", "false", "0", "否", "无", "不开庭", "无需庭审", "不需要庭审"}:
+        return "false"
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Manual E2E acceptance for mock_openchat: requires real browser + human input"
@@ -233,10 +259,15 @@ def main() -> None:
             response_text = messages.nth(prev_count).inner_text()
             payload = _extract_json_from_text(response_text)
 
-            _require(payload.get("case_id", "").endswith("###"), "case_id must end with ###")
-            _require(payload.get("case_status") in {"结案", "正在进行"}, "invalid case_status")
+            case_id = str(payload.get("case_id", "")).strip()
+            _require(bool(case_id), "case_id must be a non-empty string")
+            case_status = _normalize_case_status(payload.get("case_status"))
+            _require(case_status in {"Closed", "On-Going"}, "invalid case_status")
+            payload["case_status"] = case_status
             _require(payload.get("judgment_result") in {"leave", "grant", "dismiss"}, "invalid judgment_result")
-            _require(payload.get("hearing") in {"yes", "no"}, "invalid hearing")
+            hearing = _normalize_hearing(payload.get("hearing"))
+            _require(hearing in {"true", "false"}, "invalid hearing")
+            payload["hearing"] = hearing
 
             timeline = payload.get("timeline") or {}
             for key in (

@@ -46,6 +46,20 @@ class SessionORM(Base):
     attempts: Mapped[list[TaskAttemptORM]] = relationship(back_populates="session")
 
 
+class ProviderConfigORM(Base):
+    __tablename__ = "provider_configs"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    icon: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class TaskORM(Base):
     __tablename__ = "tasks"
 

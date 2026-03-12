@@ -107,6 +107,7 @@ python -m scripts.run_worker --max-loops 10
 7. 启动伪 openchat 站点：python -m scripts.run_mock_openchat --port 8010
 8. 伪 openchat 浏览器集成测试（Playwright）：RUN_UI_E2E=1 pytest -q tests/test_mock_openchat_playwright_integration.py
 9. 伪 openchat 人工输入 E2E 验收（必须人工操作）：python -m scripts.manual_mock_openchat_e2e
+10. manual_openai_e2e 先打 mock_openai（默认）再可切真实站点：python -m scripts.manual_openai_e2e
 
 ## 测试策略（当前建议）
 
@@ -178,6 +179,46 @@ python -m scripts.manual_mock_openchat_e2e
 5. 在同一 profile 下再次打开时，可直接恢复到已登录对话状态，无需重复登录。
 6. 如需使用不同 profile，可传参：`python -m scripts.manual_mock_openchat_e2e --user-data-dir tmp/another_profile`。
 7. 如需强制从全新会话开始（清空 profile，重新走登录流程）：`python -m scripts.manual_mock_openchat_e2e --force-fresh`。
+
+manual_openai_e2e 验收链路（补齐端到端缺失环节）：
+
+1. 先打 mock 站点（默认）：`python -m scripts.manual_openai_e2e --target mock_site`
+2. 脚本会自动启动本地 mock 站点、发送请求、采集并校验返回 JSON。
+3. mock 链路通过后，再切真实站点：`python -m scripts.manual_openai_e2e --target real_site`
+4. 真实站点模式下，脚本会打开 `https://chatgpt.com/`（可用 `--chat-url` 覆盖），你先手工完成登录/验证后继续。
+5. 可通过 `--user-data-dir` 复用会话，`--force-fresh` 强制重新登录。
+6. 若 Cloudflare 验证窗口反复弹出，可提高人工重试次数：`--max-manual-retries 10`。
+
+DeepSeek 直连页面验收基线（已验证通过）：
+
+1. 推荐命令：
+
+	`python -m scripts.manual_openai_e2e --target real_site --chat-url https://chat.deepseek.com/ --user-data-dir tmp/manual_deepseek_profile --max-manual-retries 10`
+
+2. 预期关键日志（示例）：
+
+	`[INFO] OpenAI 页面已就绪，直接进入发送阶段。`
+
+	`[INFO] 已发送消息，等待 assistant 返回...`
+
+	`[INFO] 捕获到回复，selector=div.ds-markdown, text_len=...`
+
+	`[INFO] 已采集并解析返回 JSON：{...}`
+
+	`[PASS] E2E 发送与返回校验通过。`
+
+3. 预期 JSON 口径：
+
+	- `case_status`: `Closed|On-Going`
+	- `hearing`: `true|false`
+
+兼容说明：旧参数 `--target openai` / `--target mock_openai` 仍可用。
+
+Cloudflare 反复验证建议：
+
+1. 保持同一 `--user-data-dir` 复用会话，不要频繁切换 profile。
+2. 尽量固定网络环境（避免频繁切换代理/IP）。
+3. 使用 `python -m scripts.manual_openai_e2e --target real_site --max-manual-retries 10`，按提示多轮完成验证直至聊天输入框稳定可用。
 
 与现有自动化兼容点：
 

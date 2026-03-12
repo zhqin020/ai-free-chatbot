@@ -34,7 +34,7 @@ def test_test_extract_success(client: TestClient) -> None:
         json={
             "prompt": "请提取案件结构化信息",
             "document_text": "文书正文",
-            "raw_response": '{"case_id":"IMM-3-24","case_status":"结案","judgment_result":"dismiss","hearing":"no","timeline":{"filing_date":"2024-01-01","Applicant_file_completed":"2024-04-02","reply_memo":"2024-05-01","Sent_to_Court":"2024-06-14","judgment_date":"2024-10-01"}}',
+            "raw_response": '{"case_id":"IMM-3-24","case_status":"Closed","judgment_result":"dismiss","hearing":"false","timeline":{"filing_date":"2024-01-01","Applicant_file_completed":"2024-04-02","reply_memo":"2024-05-01","Sent_to_Court":"2024-06-14","judgment_date":"2024-10-01"}}',
             "provider_hint": "openchat",
         },
     )
@@ -42,8 +42,8 @@ def test_test_extract_success(client: TestClient) -> None:
     body = response.json()
     assert body["valid"] is True
     assert body["extracted_json"]["case_id"] == "IMM-3-24"
-    assert body["extracted_json"]["case_status"] == "结案"
-    assert body["extracted_json"]["hearing"] == "no"
+    assert body["extracted_json"]["case_status"] == "Closed"
+    assert body["extracted_json"]["hearing"] == "false"
     assert body["validation_errors"] == []
 
 

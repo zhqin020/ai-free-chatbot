@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.routers.logs import router as logs_router
 from src.api.routers.metrics import router as metrics_router
+from src.api.routers.providers import router as providers_router
 from src.api.routers.sessions import router as sessions_router
 from src.api.routers.test_extract import router as test_extract_router
 from src.api.routers.tasks import router as tasks_router
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
 
     app.include_router(tasks_router)
     app.include_router(sessions_router)
+    app.include_router(providers_router)
     app.include_router(test_extract_router)
     app.include_router(metrics_router)
     app.include_router(logs_router)

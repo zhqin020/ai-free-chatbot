@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -57,9 +58,16 @@ class FakeSessionPool:
 
 
 class FakeAdapter:
-    def __init__(self, *, logged_in: bool, response: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        logged_in: bool,
+        response: str = "",
+        page_state: "FakePageState | None" = None,
+    ) -> None:
         self.logged_in = logged_in
         self.response = response
+        self.page_state = page_state
         self.last_previous_response: str | None = None
         self.sent_messages: list[str] = []
 
@@ -85,6 +93,18 @@ class FakeAdapter:
         _ = timeout_ms
         self.last_previous_response = previous_response
         return self.response
+
+    async def inspect_page_state(self, page: FakePage) -> "FakePageState | None":
+        _ = page
+        return self.page_state
+
+
+@dataclass
+class FakePageState:
+    chat_ready: bool
+    cookie_required: bool
+    verification_required: bool
+    login_required: bool
 
 
 def _setup_db(path: str) -> None:
@@ -146,6 +166,7 @@ async def test_processor_marks_wait_login_when_human_verification_detected() -> 
 
     assert result.ok is False
     assert "human verification required" in (result.error_message or "")
+    assert "notify-ready" in (result.error_message or "")
     assert page.brought_to_front is True
 
     session_row = SessionRepository().get(session_id)
@@ -190,3 +211,86 @@ async def test_processor_enters_dialog_and_returns_response_when_logged_in() -> 
     assert "请提取结构化字段" in adapter.sent_messages[0]
     assert "这里是文书正文" in adapter.sent_messages[0]
     assert pool.reset_calls == []
+
+
+@pytest.mark.asyncio
+async def test_processor_marks_wait_login_when_cookie_consent_required() -> None:
+    session_id, task_id = _prepare_task_and_session("tmp/test_browser_dialog_cookie_required.db")
+
+    page = FakePage(verify_visible=False)
+    pool = FakeSessionPool(page)
+    adapter = FakeAdapter(
+        logged_in=False,
+        page_state=FakePageState(
+            chat_ready=False,
+            cookie_required=True,
+            verification_required=False,
+            login_required=False,
+        ),
+    )
+
+    processor = PooledProviderTaskProcessor(
+        provider=Provider.OPENCHAT,
+        adapter=adapter,
+        session_pool=pool,
+    )
+
+    result = await processor.process(
+        DispatchDecision(
+            task_id=task_id,
+            session_id=session_id,
+            provider=Provider.OPENCHAT,
+            attempt_id=1,
+            attempt_no=1,
+            dispatched_at=datetime.now(UTC),
+        )
+    )
+
+    assert result.ok is False
+    assert "cookie consent required" in (result.error_message or "")
+    assert "notify-ready" in (result.error_message or "")
+    assert page.brought_to_front is True
+
+    session_row = SessionRepository().get(session_id)
+    assert session_row is not None
+    assert session_row.state == SessionState.WAIT_LOGIN
+    assert session_row.login_state == "need_login"
+
+
+@pytest.mark.asyncio
+async def test_processor_uses_page_state_chat_ready_even_if_logged_in_check_false() -> None:
+    session_id, task_id = _prepare_task_and_session("tmp/test_browser_dialog_chat_ready_override.db")
+
+    page = FakePage(verify_visible=False)
+    pool = FakeSessionPool(page)
+    adapter = FakeAdapter(
+        logged_in=False,
+        response="{\"ok\": true}",
+        page_state=FakePageState(
+            chat_ready=True,
+            cookie_required=False,
+            verification_required=False,
+            login_required=False,
+        ),
+    )
+
+    processor = PooledProviderTaskProcessor(
+        provider=Provider.OPENCHAT,
+        adapter=adapter,
+        session_pool=pool,
+    )
+
+    result = await processor.process(
+        DispatchDecision(
+            task_id=task_id,
+            session_id=session_id,
+            provider=Provider.OPENCHAT,
+            attempt_id=1,
+            attempt_no=1,
+            dispatched_at=datetime.now(UTC),
+        )
+    )
+
+    assert result.ok is True
+    assert result.raw_response == "{\"ok\": true}"
+    assert len(adapter.sent_messages) == 1

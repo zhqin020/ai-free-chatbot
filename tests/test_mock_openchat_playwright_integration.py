@@ -149,9 +149,9 @@ def test_mock_openchat_browser_flow_end_to_end(mock_openchat_server: str) -> Non
         payload = json.loads(response_text)
 
         assert payload["case_id"].startswith("AB-42")
-        assert payload["case_status"] in {"结案", "正在进行"}
+        assert payload["case_status"] in {"Closed", "On-Going"}
         assert payload["judgment_result"] in {"leave", "grant", "dismiss"}
-        assert payload["hearing"] in {"yes", "no"}
+        assert payload["hearing"] in {"true", "false"}
 
         timeline = payload["timeline"]
         assert "filing_date" in timeline

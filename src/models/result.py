@@ -10,8 +10,8 @@ from src.models.session import Provider
 
 
 class CaseStatus(str, Enum):
-    CLOSED = "结案"
-    ONGOING = "正在进行"
+    CLOSED = "Closed"
+    ONGOING = "On-Going"
 
 
 class JudgmentResult(str, Enum):
@@ -21,8 +21,8 @@ class JudgmentResult(str, Enum):
 
 
 class HearingStatus(str, Enum):
-    YES = "yes"
-    NO = "no"
+    YES = "true"
+    NO = "false"
 
 
 class Timeline(BaseModel):

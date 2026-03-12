@@ -9,10 +9,11 @@ from fastapi.responses import HTMLResponse
 
 
 def _extract_case_id(user_message: str) -> str:
-    match = re.search(r"([A-Za-z]{2,}-\d{2,}|\d{4}[-_/]\d+)", user_message)
+    # Preserve the case id as-is from user text for downstream matching.
+    match = re.search(r"([A-Za-z]{2,}-\d{1,6}-\d{1,4}|[A-Za-z]{2,}-\d{2,}|\d{4}[-_/]\d+)", user_message)
     if match:
-        return f"{match.group(1)}###"
-    return "MOCK-2026-001###"
+        return match.group(1)
+    return "MOCK-2026-001"
 
 
 def _date_str(value: date) -> str:
@@ -29,9 +30,9 @@ def build_mock_json_payload(user_message: str) -> dict[str, object]:
 
     return {
         "case_id": _extract_case_id(user_message),
-        "case_status": "结案",
+      "case_status": "Closed",
         "judgment_result": "grant",
-        "hearing": "yes",
+      "hearing": "true",
         "timeline": {
             "filing_date": _date_str(filing),
             "Applicant_file_completed": _date_str(applicant_file_completed),
@@ -374,14 +375,14 @@ def _render_page() -> str:
       const now = new Date();
       const day = 24 * 60 * 60 * 1000;
       const asDate = (offset) => new Date(now.getTime() + offset * day).toISOString().slice(0, 10);
-      const caseIdMatch = userText.match(/([A-Za-z]{2,}-\\d{2,}|\\d{4}[-_/]\\d+)/);
-      const caseId = (caseIdMatch ? caseIdMatch[1] : 'MOCK-2026-001') + '###';
+      const caseIdMatch = userText.match(/([A-Za-z]{2,}-\\d{1,6}-\\d{1,4}|[A-Za-z]{2,}-\\d{2,}|\\d{4}[-_/]\\d+)/);
+      const caseId = caseIdMatch ? caseIdMatch[1] : 'MOCK-2026-001';
 
       const payload = {
         case_id: caseId,
-        case_status: '结案',
+        case_status: 'Closed',
         judgment_result: 'grant',
-        hearing: 'yes',
+        hearing: 'true',
         timeline: {
           filing_date: asDate(-120),
           Applicant_file_completed: asDate(-108),

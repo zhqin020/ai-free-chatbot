@@ -12,6 +12,7 @@ from src.models.result import CaseStatus
 from src.models.task import TaskCreate, TaskStatus
 from src.storage.database import (
     ExtractedResultORM,
+    ProviderConfigORM,
     RawResponseORM,
     SessionORM,
     SystemLogORM,
@@ -79,6 +80,23 @@ class SessionRepository:
             session.delete(row)
             return True
 
+    def list_by_provider(self, provider: Provider) -> list[SessionORM]:
+        with session_scope() as session:
+            rows = session.execute(
+                select(SessionORM)
+                .where(SessionORM.provider == provider)
+                .order_by(SessionORM.priority.asc(), SessionORM.id.asc())
+            ).scalars().all()
+            return rows
+
+    def delete_by_provider(self, provider: Provider) -> int:
+        with session_scope() as session:
+            rows = session.execute(select(SessionORM).where(SessionORM.provider == provider)).scalars().all()
+            count = len(rows)
+            for row in rows:
+                session.delete(row)
+            return count
+
     def recover_stuck_busy_sessions(self) -> int:
         with session_scope() as session:
             rows = session.execute(
@@ -113,7 +131,6 @@ class TaskRepository:
             session.flush()
             session.refresh(row)
             return row
-
     def get(self, task_id: str) -> Optional[TaskORM]:
         with session_scope() as session:
             return session.get(TaskORM, task_id)
@@ -243,6 +260,68 @@ class TaskRepository:
                 .limit(1)
             ).scalars().first()
             return row
+
+
+class ProviderConfigRepository:
+    DEFAULTS: dict[str, dict[str, str]] = {
+        "mock_openai": {"url": "http://127.0.0.1:8010/", "icon": "🧪"},
+        "deepseek": {"url": "https://chat.deepseek.com/", "icon": "🤖"},
+    }
+
+    def ensure_defaults(self) -> None:
+        now = datetime.now(UTC)
+        with session_scope() as session:
+            for name, value in self.DEFAULTS.items():
+                row = session.get(ProviderConfigORM, name)
+                if row is None:
+                    row = ProviderConfigORM(
+                        name=name,
+                        url=value["url"],
+                        icon=value["icon"],
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(row)
+
+    def list(self) -> list[ProviderConfigORM]:
+        self.ensure_defaults()
+        with session_scope() as session:
+            rows = session.execute(select(ProviderConfigORM).order_by(ProviderConfigORM.name.asc())).scalars().all()
+            return rows
+
+    def get(self, name: str) -> ProviderConfigORM | None:
+        self.ensure_defaults()
+        with session_scope() as session:
+            return session.get(ProviderConfigORM, name)
+
+    def upsert(self, name: str, *, url: str, icon: str) -> ProviderConfigORM:
+        now = datetime.now(UTC)
+        with session_scope() as session:
+            row = session.get(ProviderConfigORM, name)
+            if row is None:
+                row = ProviderConfigORM(
+                    name=name,
+                    url=url,
+                    icon=icon,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+            else:
+                row.url = url
+                row.icon = icon
+                row.updated_at = now
+            session.flush()
+            session.refresh(row)
+            return row
+
+    def delete(self, name: str) -> bool:
+        with session_scope() as session:
+            row = session.get(ProviderConfigORM, name)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
 
 
 class AttemptRepository:

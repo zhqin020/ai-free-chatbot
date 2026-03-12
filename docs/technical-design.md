@@ -91,8 +91,8 @@ class Provider(str, Enum):
     DEEPSEEK = "deepseek"
 
 class CaseStatus(str, Enum):
-    CLOSED = "结案"
-    ONGOING = "正在进行"
+    CLOSED = "Closed"
+    ONGOING = "On-Going"
 
 class Timeline(BaseModel):
     filing_date: Optional[date] = None

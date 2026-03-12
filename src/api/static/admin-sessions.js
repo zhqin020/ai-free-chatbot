@@ -24,6 +24,10 @@ const api = {
 		return this.request("/api/sessions");
 	},
 
+	discoverSessions() {
+		return this.request("/api/sessions/discover", { method: "POST" });
+	},
+
 	createSession(payload) {
 		return this.request("/api/sessions", { method: "POST", body: JSON.stringify(payload) });
 	},
@@ -160,13 +164,8 @@ function renderRows() {
       <td>${new Date(session.updated_at).toLocaleString()}</td>
       <td>
         <div class="row-actions">
-          <button type="button" class="btn btn-mini btn-secondary" data-action="edit" data-id="${session.id}">Edit</button>
-          <button type="button" class="btn btn-mini btn-secondary" data-action="toggle" data-id="${session.id}">
-            ${session.enabled ? "Disable" : "Enable"}
-          </button>
-          <button type="button" class="btn btn-mini btn-secondary" data-action="login-ok" data-id="${session.id}">Login OK</button>
-          <button type="button" class="btn btn-mini btn-secondary" data-action="open" data-id="${session.id}">Open</button>
-          <button type="button" class="btn btn-mini btn-danger" data-action="delete" data-id="${session.id}">Delete</button>
+		  <button type="button" class="btn btn-mini btn-secondary" data-action="login-ok" data-id="${session.id}">Mark Ready</button>
+		  <button type="button" class="btn btn-mini btn-secondary" data-action="open" data-id="${session.id}">Open</button>
         </div>
       </td>
     `;
@@ -273,6 +272,11 @@ async function reloadSessions() {
 	applyFilters();
 }
 
+async function discoverAndReloadSessions() {
+	await api.discoverSessions();
+	await reloadSessions();
+}
+
 async function batchSetEnabled(enabled) {
 	const targets = state.sessions.filter((row) => state.selectedIds.has(row.id));
 	if (!targets.length) {
@@ -296,33 +300,7 @@ async function batchSetEnabled(enabled) {
 
 async function handleSubmit(event) {
 	event.preventDefault();
-	const payload = readFormPayload();
-
-	if (!payload.id) {
-		showToast("Session ID is required.");
-		return;
-	}
-	if (!payload.chat_url) {
-		showToast("Chat URL is required.");
-		return;
-	}
-
-	if (state.editingId) {
-		const updatePayload = {
-			provider: payload.provider,
-			chat_url: payload.chat_url,
-			enabled: payload.enabled,
-			priority: payload.priority,
-		};
-		await api.updateSession(state.editingId, updatePayload);
-		showToast(`Session updated: ${state.editingId}`);
-	} else {
-		await api.createSession(payload);
-		showToast(`Session created: ${payload.id}`);
-	}
-
-	await reloadSessions();
-	resetForm();
+	showToast("Manual create/update is disabled. Sessions are discovered from Provider settings.");
 }
 
 async function handleRowAction(event) {
@@ -337,24 +315,9 @@ async function handleRowAction(event) {
 		return;
 	}
 
-	if (action === "edit") {
-		fillFormForEdit(row);
-		return;
-	}
-
-	if (action === "toggle") {
-		await api.updateSession(id, {
-			provider: row.provider,
-			chat_url: row.chat_url,
-			enabled: !row.enabled,
-			priority: row.priority,
-		});
-		showToast(`${id} ${row.enabled ? "disabled" : "enabled"}`);
-	}
-
 	if (action === "login-ok") {
 		await api.markLoginOk(id);
-		showToast(`Login state reset: ${id}`);
+		showToast(`Session marked ready: ${id}`);
 	}
 
 	if (action === "open") {
@@ -363,17 +326,6 @@ async function handleRowAction(event) {
 			window.open(result.chat_url, "_blank", "noopener,noreferrer");
 		}
 		showToast(`Open link for: ${id}`);
-	}
-
-	if (action === "delete") {
-		const confirmed = window.confirm(`Delete session ${id}?`);
-		if (!confirmed) return;
-		await api.deleteSession(id);
-		state.selectedIds.delete(id);
-		if (state.editingId === id) {
-			resetForm();
-		}
-		showToast(`Deleted: ${id}`);
 	}
 
 	await reloadSessions();
@@ -386,12 +338,12 @@ async function init() {
 
 	nodes.resetBtn.addEventListener("click", () => {
 		resetForm();
-		showToast("Form cleared");
+		showToast("Manual form is disabled in discovery mode");
 	});
 
 	nodes.refreshBtn.addEventListener("click", () => {
-		Promise.all([reloadSessions(), reloadErrors()])
-			.then(() => showToast("Refreshed"))
+		Promise.all([discoverAndReloadSessions(), reloadErrors()])
+			.then(() => showToast("Discovered and refreshed"))
 			.catch((err) => showToast(err.message));
 	});
 
@@ -448,11 +400,11 @@ async function init() {
 	});
 
 	nodes.batchEnable.addEventListener("click", () => {
-		batchSetEnabled(true).catch((err) => showToast(err.message));
+		showToast("Batch enable is disabled in discovery mode.");
 	});
 
 	nodes.batchDisable.addEventListener("click", () => {
-		batchSetEnabled(false).catch((err) => showToast(err.message));
+		showToast("Batch disable is disabled in discovery mode.");
 	});
 
 	nodes.refreshErrors.addEventListener("click", () => {
@@ -461,7 +413,20 @@ async function init() {
 
 	resetForm();
 	clearFilters();
-	await Promise.all([reloadSessions(), reloadErrors()]);
+	const formPanel = document.querySelector('section[aria-label="Session form"]');
+	if (formPanel) {
+		formPanel.style.display = "none";
+	}
+	const batchBar = document.querySelector(".batch-bar");
+	if (batchBar) {
+		batchBar.style.display = "none";
+	}
+	const queryProvider = new URLSearchParams(window.location.search).get("provider");
+	if (queryProvider && [...nodes.filterProvider.options].some((opt) => opt.value === queryProvider)) {
+		state.filters.provider = queryProvider;
+		nodes.filterProvider.value = queryProvider;
+	}
+	await Promise.all([discoverAndReloadSessions(), reloadErrors()]);
 }
 
 init().catch((err) => showToast(err.message));

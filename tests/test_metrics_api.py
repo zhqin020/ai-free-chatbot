@@ -73,7 +73,7 @@ def _seed_metrics_data() -> None:
     a2 = attempt_repo.start_attempt(t2.id, "s-openchat-1", 1)
     attempt_repo.finish_attempt(a2.id, "FAILED", latency_ms=300, error_message="response timeout")
 
-    task_repo.save_extracted_result(t1.id, valid_schema=True, case_status="结案", judgment_result="dismiss")
+    task_repo.save_extracted_result(t1.id, valid_schema=True, case_status="Closed", judgment_result="dismiss")
     task_repo.save_extracted_result(t2.id, valid_schema=False, extraction_error="validate_error")
 
 

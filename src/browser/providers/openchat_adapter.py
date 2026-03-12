@@ -1,9 +1,27 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from src.browser.providers.base import ProviderAdapter
+
+
+@dataclass
+class OpenChatPageState:
+    chat_ready: bool
+    cookie_required: bool
+    verification_required: bool
+    login_required: bool
+
+    def gate_reason(self) -> str:
+        if self.cookie_required:
+            return "cookie consent required"
+        if self.verification_required:
+            return "human verification required"
+        if self.login_required:
+            return "login required"
+        return "chat input unavailable"
 
 
 class OpenChatAdapter(ProviderAdapter):
@@ -32,6 +50,17 @@ class OpenChatAdapter(ProviderAdapter):
     poll_interval_seconds: float = 1.0
     stable_ticks_required: int = 1
     fallback_send_key: str = "Enter"
+    cookie_gate_selectors = (
+        "[data-testid='cookie-accept']",
+        "text=Cookie 设置",
+        "button:has-text('Accept all')",
+        "button:has-text('Accept')",
+    )
+    verification_selectors = (
+        "text=Verify you are human",
+        "iframe[title*='challenge' i]",
+        "iframe[src*='challenges.cloudflare.com']",
+    )
 
     async def is_logged_in(self, page: Any) -> bool:
         input_selector = await self._pick_visible_selector(page, self.input_selectors)
@@ -40,6 +69,20 @@ class OpenChatAdapter(ProviderAdapter):
 
         login_hint = await self._pick_visible_selector(page, self.login_hint_selectors)
         return login_hint is None
+
+    async def inspect_page_state(self, page: Any) -> OpenChatPageState:
+        cookie_required = await self._pick_visible_selector(page, self.cookie_gate_selectors) is not None
+        verification_required = await self._pick_visible_selector(page, self.verification_selectors) is not None
+        login_required = await self._pick_visible_selector(page, self.login_hint_selectors) is not None
+        input_selector = await self._pick_visible_selector(page, self.input_selectors)
+        chat_ready = bool(input_selector is not None and not login_required and not verification_required)
+
+        return OpenChatPageState(
+            chat_ready=chat_ready,
+            cookie_required=cookie_required,
+            verification_required=verification_required,
+            login_required=login_required,
+        )
 
     async def send_message(self, page: Any, message: str) -> None:
         input_selector = await self._pick_visible_selector(page, self.input_selectors)

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.models.session import SessionConfig, SessionRead, SessionState, SessionUpdate
+from src.models.session import Provider, SessionConfig, SessionRead, SessionState, SessionUpdate
 from src.storage.database import SessionORM
-from src.storage.repositories import SessionRepository
+from src.storage.repositories import ProviderConfigRepository, SessionRepository
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 session_repo = SessionRepository()
+provider_repo = ProviderConfigRepository()
 
 
 def _to_session_read(row: SessionORM) -> SessionRead:
@@ -25,10 +26,44 @@ def _to_session_read(row: SessionORM) -> SessionRead:
     )
 
 
+def _map_provider_name_to_session_provider(name: str) -> Provider | None:
+    if name == "mock_openai":
+        return Provider.OPENCHAT
+    try:
+        return Provider(name)
+    except ValueError:
+        return None
+
+
 @router.post("", response_model=SessionRead, status_code=status.HTTP_201_CREATED)
 def create_session(payload: SessionConfig) -> SessionRead:
     row = session_repo.upsert(payload)
     return _to_session_read(row)
+
+
+@router.post("/discover", response_model=list[SessionRead])
+def discover_sessions() -> list[SessionRead]:
+    provider_rows = provider_repo.list()
+    discovered: list[SessionRead] = []
+
+    for index, provider_row in enumerate(provider_rows, start=1):
+        mapped_provider = _map_provider_name_to_session_provider(provider_row.name)
+        if mapped_provider is None:
+            continue
+
+        session_id = f"s-{provider_row.name}-1"
+        existing = session_repo.get(session_id)
+        config = SessionConfig(
+            id=session_id,
+            provider=mapped_provider,
+            chat_url=provider_row.url,
+            enabled=existing.enabled if existing is not None else True,
+            priority=existing.priority if existing is not None else (100 + index),
+        )
+        row = session_repo.upsert(config)
+        discovered.append(_to_session_read(row))
+
+    return discovered
 
 
 @router.get("", response_model=list[SessionRead])
@@ -76,6 +111,12 @@ def mark_login_ok(session_id: str) -> SessionRead:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
     return _to_session_read(row)
+
+
+@router.post("/{session_id}/notify-ready", response_model=SessionRead)
+def notify_ready(session_id: str) -> SessionRead:
+    # Alias for automation scripts: explicitly notify worker the session is human-ready.
+    return mark_login_ok(session_id)
 
 
 @router.post("/{session_id}/open")

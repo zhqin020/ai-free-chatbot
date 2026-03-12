@@ -6,7 +6,7 @@
 ## @zhqin020
 
 1. 创建一个项目，可以向多个已经开启的浏览器中的 AI  chat 自动提问，并且提取回复进行存储。
-2. 回复的格式要求是 json 格式，比如对于法院文书，要求 ai chat 分析后，得出 包含以下几个元素的json： 案件状态（结案/正在进行）， 判决结果，各种节点的时间（立案、提交法官、庭审、判决）
+2. 回复的格式要求是 json 格式，比如对于法院文书，要求 ai chat 分析后，得出 包含以下几个元素的json： 案件状态（Closed/On-Going）， 判决结果，各种节点的时间（立案、提交法官、庭审、判决）
 3. 支持多个浏览器同时开启不同的chat 窗口，支持 openchat, gemini, grok, deepseek 等，提示用户登录并等待程序自动运行查询
 4. 如果开启了多个浏览器，需要进行轮询，依次将多个问题发给不同的浏览器，等待回复后进行提取和存储，如果上一个浏览器没有回复，就切换到下一个浏览器继续发送 prompt，如果所有的浏览器都没有回复，应该等待一段时间后再次尝试
 如果浏览器关闭了，应该重新启动浏览器并继续发送 prompt
@@ -84,10 +84,10 @@
 定义并实现以下字段的自动抽取：
 ```json
 {
-	"case_id": "string###",
-  "case_status": "结案|正在进行",
+  "case_id": "string",
+  "case_status": "Closed|On-Going",
   "judgment_result": "leave|grant|dismiss",
-  "hearing": "yes|no",
+  "hearing": "true|false",
   "timeline": {
     "filing_date": "YYYY-MM-DD",
     "Applicant_file_completed": "YYYY-MM-DD",
@@ -252,10 +252,10 @@ class BrowserController:
 
 必须遵循以下JSON结构：
 {
-	"case_id": "string###",
-  "case_status": "结案|正在进行",
+  "case_id": "string",
+  "case_status": "Closed|On-Going",
   "judgment_result": "leave|grant|dismiss",
-  "hearing": "yes|no",
+  "hearing": "true|false",
   "timeline": {
     "filing_date": "YYYY-MM-DD",
     "Applicant_file_completed": "YYYY-MM-DD",
@@ -418,8 +418,8 @@ from datetime import date
 from enum import Enum
 
 class CaseStatus(str, Enum):
-    CLOSED = "结案"
-    ONGOING = "正在进行"
+  CLOSED = "Closed"
+  ONGOING = "On-Going"
 
 class CaseTimeline(BaseModel):
     filing_date: date

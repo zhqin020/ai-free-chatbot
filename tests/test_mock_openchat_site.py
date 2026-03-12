@@ -27,9 +27,9 @@ def test_mock_json_payload_matches_required_template_keys() -> None:
     payload = build_mock_json_payload("case AB-42 请提取")
 
     assert payload["case_id"].startswith("AB-42")
-    assert payload["case_status"] in {"结案", "正在进行"}
+    assert payload["case_status"] in {"Closed", "On-Going"}
     assert payload["judgment_result"] in {"leave", "grant", "dismiss"}
-    assert payload["hearing"] in {"yes", "no"}
+    assert payload["hearing"] in {"true", "false"}
 
     timeline = payload["timeline"]
     assert "filing_date" in timeline
@@ -45,5 +45,5 @@ def test_mock_json_api_returns_template_payload() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["case_id"].endswith("###")
+    assert body["case_id"] == "2026-88"
     assert "timeline" in body

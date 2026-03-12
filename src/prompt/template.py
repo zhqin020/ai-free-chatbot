@@ -5,10 +5,10 @@ EXTRACTION_FORMAT_TEMPLATE = """
 
 JSON 必须包含：
 {
-  "case_id": "string###",
-  "case_status": "结案|正在进行",
+  "case_id": "string",
+  "case_status": "Closed|On-Going",
   "judgment_result": "leave|grant|dismiss",
-  "hearing": "yes|no",
+  "hearing": "true|false",
   "timeline": {
     "filing_date": "YYYY-MM-DD",
     "Applicant_file_completed": "YYYY-MM-DD",
@@ -25,10 +25,10 @@ RETRY_FORMAT_TEMPLATE = """
 
 请仅返回一个合法 JSON 对象，结构必须是：
 {{
-  "case_id": "string###",
-  "case_status": "结案|正在进行",
+  "case_id": "string",
+  "case_status": "Closed|On-Going",
   "judgment_result": "leave|grant|dismiss",
-  "hearing": "yes|no",
+  "hearing": "true|false",
   "timeline": {{
     "filing_date": "YYYY-MM-DD",
     "Applicant_file_completed": "YYYY-MM-DD",

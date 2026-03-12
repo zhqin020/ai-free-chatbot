@@ -90,7 +90,12 @@ class PooledProviderTaskProcessor:
                 provider=decision.provider.value,
             )
 
+            page_state = await self._inspect_adapter_page_state(page)
+
             logged_in = await self.adapter.is_logged_in(page)
+            if page_state is not None:
+                logged_in = page_state.chat_ready
+
             if not logged_in:
                 try:
                     await page.bring_to_front()
@@ -98,13 +103,44 @@ class PooledProviderTaskProcessor:
                     pass
 
                 login_message = (
-                    "session not logged in; please log in via /admin/sessions and click mark-login-ok"
+                    "session not logged in; please complete required steps in opened browser, "
+                    "then notify worker readiness via /admin/sessions (Mark Login OK) "
+                    "or POST /api/sessions/{session_id}/notify-ready"
                 )
-                if await self._looks_like_human_verification(page):
+
+                if page_state is not None:
+                    if page_state.cookie_required:
+                        login_message = (
+                            "cookie consent required before login. "
+                            "Please complete cookie/verification/login in opened browser, "
+                            "then notify worker readiness via /admin/sessions (Mark Login OK) "
+                            "or POST /api/sessions/{session_id}/notify-ready"
+                        )
+                    elif page_state.verification_required:
+                        login_message = (
+                            "human verification required (Cloudflare). "
+                            "Please complete verification/login in the opened browser, "
+                            "then notify worker readiness via /admin/sessions (Mark Login OK) "
+                            "or POST /api/sessions/{session_id}/notify-ready"
+                        )
+                    elif page_state.login_required:
+                        login_message = (
+                            "session login required. Please log in via opened browser, "
+                            "then notify worker readiness via /admin/sessions (Mark Login OK) "
+                            "or POST /api/sessions/{session_id}/notify-ready"
+                        )
+                    else:
+                        login_message = (
+                            "chat window is not ready; please complete any required prompts in opened browser, "
+                            "then notify worker readiness via /admin/sessions (Mark Login OK) "
+                            "or POST /api/sessions/{session_id}/notify-ready"
+                        )
+                elif await self._looks_like_human_verification(page):
                     login_message = (
                         "human verification required (Cloudflare). "
                         "Please complete verification/login in the opened browser, "
-                        "then click Mark Login OK in /admin/sessions"
+                        "then notify worker readiness via /admin/sessions (Mark Login OK) "
+                        "or POST /api/sessions/{session_id}/notify-ready"
                     )
 
                 self.session_repo.update_state(
@@ -153,6 +189,15 @@ class PooledProviderTaskProcessor:
         except Exception:
             return False
         return False
+
+    async def _inspect_adapter_page_state(self, page: object) -> object | None:
+        inspect_fn = getattr(self.adapter, "inspect_page_state", None)
+        if not callable(inspect_fn):
+            return None
+        try:
+            return await inspect_fn(page)
+        except Exception:
+            return None
 
 
 class OpenChatTaskProcessor(PooledProviderTaskProcessor):

@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Iterator
+
+import pytest
+from fastapi.testclient import TestClient
+
+from src.config import reset_settings_cache
+from src.storage.database import init_db
+
+
+@pytest.fixture
+def client() -> Iterator[TestClient]:
+    db_path = Path("tmp/test_providers_api.db")
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if db_path.exists():
+        db_path.unlink()
+
+    os.environ["DB_URL"] = "sqlite:///tmp/test_providers_api.db"
+    reset_settings_cache()
+    init_db()
+
+    from src.api.main import create_app
+
+    with TestClient(create_app()) as test_client:
+        yield test_client
+
+
+def test_builtin_providers_exist(client: TestClient) -> None:
+    resp = client.get("/api/providers")
+    assert resp.status_code == 200
+    rows = resp.json()
+
+    names = {row["name"] for row in rows}
+    assert "mock_openai" in names
+    assert "deepseek" in names
+
+
+def test_provider_crud_and_actions(client: TestClient) -> None:
+    create_resp = client.post(
+        "/api/providers",
+        json={
+            "name": "gemini_custom",
+            "url": "https://gemini.google.com/",
+            "icon": "✨",
+        },
+    )
+    assert create_resp.status_code == 201
+    assert create_resp.json()["name"] == "gemini_custom"
+
+    update_resp = client.put(
+        "/api/providers/gemini_custom",
+        json={
+            "url": "https://example.com/gemini",
+            "icon": "🛰️",
+        },
+    )
+    assert update_resp.status_code == 200
+    assert update_resp.json()["url"].endswith("/gemini")
+
+    open_resp = client.post("/api/providers/deepseek/open-browser")
+    assert open_resp.status_code == 200
+    assert "deepseek" in open_resp.json()["url"]
+
+    target_resp = client.get("/api/providers/deepseek/session-target")
+    assert target_resp.status_code == 200
+    assert target_resp.json()["sessions_url"] == "/admin/sessions?provider=deepseek"
+
+    delete_resp = client.delete("/api/providers/gemini_custom")
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["deleted"] is True
+
+
+def test_clear_sessions_by_provider_mapping(client: TestClient) -> None:
+    create_mock = client.post(
+        "/api/sessions",
+        json={
+            "id": "s-openchat-1",
+            "provider": "openchat",
+            "chat_url": "http://127.0.0.1:8010/",
+            "enabled": True,
+            "priority": 10,
+        },
+    )
+    assert create_mock.status_code == 201
+
+    create_deepseek = client.post(
+        "/api/sessions",
+        json={
+            "id": "s-deepseek-1",
+            "provider": "deepseek",
+            "chat_url": "https://chat.deepseek.com/",
+            "enabled": True,
+            "priority": 20,
+        },
+    )
+    assert create_deepseek.status_code == 201
+
+    clear_resp = client.post("/api/providers/mock_openai/clear-sessions")
+    assert clear_resp.status_code == 200
+    assert clear_resp.json()["session_provider"] == "openchat"
+    assert clear_resp.json()["cleared_count"] == 1
+
+    list_resp = client.get("/api/sessions")
+    assert list_resp.status_code == 200
+    ids = {row["id"] for row in list_resp.json()}
+    assert "s-openchat-1" not in ids
+    assert "s-deepseek-1" in ids

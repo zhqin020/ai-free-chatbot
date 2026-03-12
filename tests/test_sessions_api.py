@@ -91,3 +91,23 @@ def test_session_actions(client: TestClient) -> None:
     assert mark_resp.status_code == 200
     assert mark_resp.json()["state"] == "READY"
     assert mark_resp.json()["login_state"] == "logged_in"
+
+    notify_resp = client.post("/api/sessions/s-gemini-1/notify-ready")
+    assert notify_resp.status_code == 200
+    assert notify_resp.json()["state"] == "READY"
+    assert notify_resp.json()["login_state"] == "logged_in"
+
+
+def test_session_discovery_and_ready_update(client: TestClient) -> None:
+    discover_resp = client.post("/api/sessions/discover")
+    assert discover_resp.status_code == 200
+    discovered = discover_resp.json()
+    ids = {row["id"] for row in discovered}
+
+    assert "s-mock_openai-1" in ids
+    assert "s-deepseek-1" in ids
+
+    deepseek_ready = client.post("/api/sessions/s-deepseek-1/notify-ready")
+    assert deepseek_ready.status_code == 200
+    assert deepseek_ready.json()["state"] == "READY"
+    assert deepseek_ready.json()["login_state"] == "logged_in"

@@ -5,35 +5,77 @@
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<title>Admin Settings</title>
-	<link rel="stylesheet" href="/ui/admin-home.css" />
+	<link rel="stylesheet" href="/ui/admin-settings.css" />
+	<script defer src="/ui/admin-settings.js"></script>
 </head>
 
 <body>
 	<main class="page">
-		<header class="hero">
-			<p class="eyebrow">SETTINGS</p>
-			<h1>设置中心</h1>
-			<p class="lead">环境变量与运行参数说明。建议配合 README 一起使用。</p>
+		<header class="topbar">
+			<div>
+				<p class="eyebrow">SETTINGS</p>
+				<h1>Provider Settings Console</h1>
+				<p class="lead">管理 provider（增删改）、打开浏览器、清空 session、查看 session。</p>
+			</div>
+			<nav class="links">
+				<a href="/admin">Home</a>
+				<a href="/admin/query">Query</a>
+				<a href="/admin/sessions">Sessions</a>
+				<a href="/admin/test-extract">Test Extract</a>
+			</nav>
 		</header>
 
-		<section class="menu-grid">
-			<article class="menu-card">
-				<h2>核心变量</h2>
-				<p>APP_NAME / APP_ENV / LOG_LEVEL / DB_URL / API_TOKEN / WORKER_HEADLESS</p>
-			</article>
-			<article class="menu-card">
-				<h2>启动顺序</h2>
-				<p>init_db -> API(uvicorn) -> worker(run_worker)</p>
-			</article>
+		<section class="panel" aria-label="Provider form">
+			<div class="panel-head">
+				<h2 id="form-title">Create Provider</h2>
+				<div class="actions">
+					<button id="refresh-btn" type="button" class="btn btn-secondary">Refresh</button>
+				</div>
+			</div>
+			<form id="provider-form" class="form-grid">
+				<input id="editing-name" type="hidden" />
+				<label>
+					Name
+					<input id="provider-name" required placeholder="mock_openai" />
+				</label>
+				<label>
+					URL
+					<input id="provider-url" required placeholder="https://chat.deepseek.com/" />
+				</label>
+				<label>
+					Icon
+					<input id="provider-icon" required placeholder="🤖" />
+				</label>
+				<div class="actions span-3">
+					<button id="submit-btn" type="submit" class="btn btn-primary">Create</button>
+					<button id="reset-btn" type="button" class="btn btn-ghost">Reset</button>
+				</div>
+			</form>
 		</section>
 
-		<section class="quick-links">
-			<a href="/admin">返回入口</a>
-			<a href="/admin/test-extract">进入测试页</a>
-			<a href="/admin/query">进入查询页</a>
-			<a href="/admin/sessions">进入会话管理</a>
-			<a href="/docs">查看 API 文档</a>
+		<section class="panel" aria-label="Provider list">
+			<div class="panel-head">
+				<h2>Providers</h2>
+				<p id="stats" class="muted">Total: 0</p>
+			</div>
+			<div class="table-wrap">
+				<table>
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Icon</th>
+							<th>URL</th>
+							<th>Session Provider</th>
+							<th>Updated</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody id="provider-rows"></tbody>
+				</table>
+			</div>
 		</section>
+
+		<div id="toast" role="status" aria-live="polite"></div>
 	</main>
 </body>
 

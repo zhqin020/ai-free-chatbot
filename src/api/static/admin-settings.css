@@ -1,0 +1,187 @@
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	font-family: "Noto Sans SC", "PingFang SC", sans-serif;
+	background: #f4f6f9;
+	color: #13213a;
+}
+
+.page {
+	max-width: 1200px;
+	margin: 0 auto;
+	padding: 20px;
+	display: grid;
+	gap: 16px;
+}
+
+.topbar {
+	background: #fff;
+	border: 1px solid #dbe3ef;
+	border-radius: 12px;
+	padding: 16px;
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.eyebrow {
+	margin: 0;
+	font-size: 12px;
+	letter-spacing: 0.12em;
+	color: #5f6f87;
+}
+
+h1,
+h2 {
+	margin: 6px 0;
+}
+
+.lead {
+	margin: 0;
+	color: #5f6f87;
+}
+
+.links {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.links a {
+	color: #2449d8;
+	text-decoration: none;
+	font-weight: 600;
+}
+
+.panel {
+	background: #fff;
+	border: 1px solid #dbe3ef;
+	border-radius: 12px;
+	padding: 14px;
+}
+
+.panel-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 10px;
+}
+
+.form-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 10px;
+}
+
+label {
+	display: grid;
+	gap: 6px;
+	font-size: 14px;
+}
+
+input {
+	border: 1px solid #cfd8e6;
+	border-radius: 8px;
+	padding: 10px;
+}
+
+.span-3 {
+	grid-column: span 3;
+}
+
+.actions {
+	display: flex;
+	gap: 8px;
+}
+
+.btn {
+	border-radius: 8px;
+	border: 1px solid transparent;
+	padding: 8px 12px;
+	cursor: pointer;
+	font-weight: 700;
+}
+
+.btn-primary {
+	background: #2449d8;
+	color: #fff;
+}
+
+.btn-secondary {
+	border-color: #cfd8e6;
+	background: #fff;
+	color: #13213a;
+}
+
+.btn-ghost {
+	border-color: #e2e8f0;
+	background: #f8fafc;
+	color: #334155;
+}
+
+.btn-danger {
+	border-color: #ef4444;
+	background: #fff;
+	color: #ef4444;
+}
+
+.table-wrap {
+	overflow: auto;
+}
+
+table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+th,
+td {
+	border-bottom: 1px solid #edf2f7;
+	text-align: left;
+	padding: 10px;
+	vertical-align: top;
+}
+
+.muted {
+	color: #64748b;
+}
+
+.icon-cell {
+	font-size: 18px;
+}
+
+#toast {
+	position: fixed;
+	right: 20px;
+	bottom: 20px;
+	background: #13213a;
+	color: #fff;
+	padding: 10px 14px;
+	border-radius: 8px;
+	opacity: 0;
+	transform: translateY(8px);
+	transition: opacity 0.15s ease, transform 0.15s ease;
+	pointer-events: none;
+}
+
+#toast.show {
+	opacity: 1;
+	transform: translateY(0);
+}
+
+@media (max-width: 880px) {
+	.form-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.span-3 {
+		grid-column: auto;
+	}
+
+	.topbar {
+		flex-direction: column;
+	}
+}

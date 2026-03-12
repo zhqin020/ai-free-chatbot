@@ -69,9 +69,10 @@ class JSONValidator:
         if value is None:
             return None
         text = str(value).strip()
-        if text in {CaseStatus.CLOSED.value, "closed", "CLOSED"}:
+        normalized = text.lower().replace("_", "-").replace(" ", "")
+        if normalized in {"closed", "结案"}:
             return CaseStatus.CLOSED.value
-        if text in {CaseStatus.ONGOING.value, "ongoing", "ONGOING"}:
+        if normalized in {"on-going", "ongoing", "正在进行"}:
             return CaseStatus.ONGOING.value
         return text
 
@@ -86,10 +87,12 @@ class JSONValidator:
     def _normalize_hearing(self, value: Any) -> str | None:
         if value is None:
             return None
+        if isinstance(value, bool):
+            return HearingStatus.YES.value if value else HearingStatus.NO.value
         text = str(value).strip().lower()
-        if text in {HearingStatus.YES.value, "是", "有", "true", "1"}:
+        if text in {"true", "yes", "y", "1", "是", "有", "开庭", "需要庭审", "需庭审", "庭审"}:
             return HearingStatus.YES.value
-        if text in {HearingStatus.NO.value, "否", "无", "false", "0"}:
+        if text in {"false", "no", "n", "0", "否", "无", "不开庭", "无需庭审", "不需要庭审"}:
             return HearingStatus.NO.value
         return text
 
