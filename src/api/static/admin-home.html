@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Admin Hub</title>
+	<link rel="stylesheet" href="/ui/admin-home.css" />
+</head>
+
+<body>
+	<main class="page">
+		<header class="hero">
+			<p class="eyebrow">AI CHAT OPS</p>
+			<h1>统一管理入口</h1>
+			<p class="lead">从这里进入设置、测试、查询和会话管理模块。</p>
+		</header>
+
+		<section class="menu-grid" aria-label="入口菜单">
+			<a class="menu-card" href="/admin/settings">
+				<h2>设置</h2>
+				<p>查看运行参数说明、环境变量及启动建议。</p>
+			</a>
+
+			<a class="menu-card" href="/admin/test-extract">
+				<h2>测试</h2>
+				<p>测试提示词与正文，调用 /api/test/extract 并查看提取结果。</p>
+			</a>
+
+			<a class="menu-card" href="/admin/query">
+				<h2>查询</h2>
+				<p>快速进入日志与指标查询接口，定位任务问题与运行状态。</p>
+			</a>
+
+			<a class="menu-card" href="/admin/sessions">
+				<h2>会话管理</h2>
+				<p>管理各平台会话，支持增删改查、启停和登录状态处理。</p>
+			</a>
+		</section>
+
+		<section class="quick-links" aria-label="快速链接">
+			<a href="/docs">API 文档</a>
+			<a href="/healthz">健康检查</a>
+			<a href="/api/metrics/summary">指标汇总</a>
+			<a href="/api/logs">日志查询</a>
+		</section>
+	</main>
+</body>
+
+</html>

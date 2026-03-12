@@ -79,6 +79,21 @@ class SessionRepository:
             session.delete(row)
             return True
 
+    def recover_stuck_busy_sessions(self) -> int:
+        with session_scope() as session:
+            rows = session.execute(
+                select(SessionORM).where(
+                    SessionORM.enabled.is_(True),
+                    SessionORM.state == SessionState.BUSY,
+                    SessionORM.login_state != "need_login",
+                )
+            ).scalars().all()
+            for row in rows:
+                row.state = SessionState.READY
+                row.updated_at = datetime.now(UTC)
+            session.flush()
+            return len(rows)
+
 
 class TaskRepository:
     def create(self, payload: TaskCreate) -> TaskORM:
@@ -208,6 +223,26 @@ class TaskRepository:
             row.updated_at = datetime.now(UTC)
             session.flush()
             return True
+
+    def get_latest_raw_response(self, task_id: str) -> RawResponseORM | None:
+        with session_scope() as session:
+            row = session.execute(
+                select(RawResponseORM)
+                .where(RawResponseORM.task_id == task_id)
+                .order_by(RawResponseORM.captured_at.desc(), RawResponseORM.id.desc())
+                .limit(1)
+            ).scalars().first()
+            return row
+
+    def get_latest_extracted_result(self, task_id: str) -> ExtractedResultORM | None:
+        with session_scope() as session:
+            row = session.execute(
+                select(ExtractedResultORM)
+                .where(ExtractedResultORM.task_id == task_id)
+                .order_by(ExtractedResultORM.created_at.desc(), ExtractedResultORM.id.desc())
+                .limit(1)
+            ).scalars().first()
+            return row
 
 
 class AttemptRepository:

@@ -92,12 +92,30 @@ class PooledProviderTaskProcessor:
 
             logged_in = await self.adapter.is_logged_in(page)
             if not logged_in:
+                try:
+                    await page.bring_to_front()
+                except Exception:
+                    pass
+
+                login_message = (
+                    "session not logged in; please log in via /admin/sessions and click mark-login-ok"
+                )
+                if await self._looks_like_human_verification(page):
+                    login_message = (
+                        "human verification required (Cloudflare). "
+                        "Please complete verification/login in the opened browser, "
+                        "then click Mark Login OK in /admin/sessions"
+                    )
+
                 self.session_repo.update_state(
                     session_row.id,
                     SessionState.WAIT_LOGIN,
                     login_state="need_login",
                 )
-                return ProcessResult(ok=False, error_message="session not logged in")
+                return ProcessResult(
+                    ok=False,
+                    error_message=login_message,
+                )
 
             previous = await self.adapter.latest_response(page)
             message = f"{task_row.prompt_text}\n\n{task_row.document_text}"
@@ -120,6 +138,21 @@ class PooledProviderTaskProcessor:
 
     async def close(self) -> None:
         await self.session_pool.close_all()
+
+    async def _looks_like_human_verification(self, page: object) -> bool:
+        try:
+            selectors = (
+                "text=Verify you are human",
+                "iframe[title*='challenge' i]",
+                "iframe[src*='challenges.cloudflare.com']",
+            )
+            for selector in selectors:
+                locator = page.locator(selector).first  # type: ignore[attr-defined]
+                if await locator.is_visible():
+                    return True
+        except Exception:
+            return False
+        return False
 
 
 class OpenChatTaskProcessor(PooledProviderTaskProcessor):
@@ -329,6 +362,20 @@ class SchedulerWorker:
                 error_message=result.error_message or "processor failed",
                 latency_ms=elapsed_ms,
             )
+            if result.error_message and (
+                "session not logged in" in result.error_message.lower()
+                or "login required" in result.error_message.lower()
+                or "human verification" in result.error_message.lower()
+            ):
+                self.log_repo.add_log(
+                    trace_id=trace_id,
+                    level="WARNING",
+                    provider=decision.provider,
+                    task_id=decision.task_id,
+                    session_id=decision.session_id,
+                    event="session_login_required",
+                    message=result.error_message,
+                )
             if result.permanent_failure:
                 self.task_repo.mark_status(task_id=decision.task_id, status=TaskStatus.FAILED)
             self.log_repo.add_log(
@@ -423,6 +470,13 @@ class SchedulerWorker:
     async def run_forever(self, stop_after: int | None = None) -> None:
         count = 0
         try:
+            recovered_sessions = self.scheduler.session_repo.recover_stuck_busy_sessions()
+            if recovered_sessions > 0:
+                self.log_repo.add_log(
+                    level="WARNING",
+                    event="session_recovered",
+                    message=f"recovered_stuck_busy_sessions={recovered_sessions}",
+                )
             while True:
                 _ = await self.run_once()
                 count += 1

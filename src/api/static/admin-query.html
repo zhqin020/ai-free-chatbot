@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Admin Query</title>
+	<link rel="stylesheet" href="/ui/admin-home.css" />
+</head>
+
+<body>
+	<main class="page">
+		<header class="hero">
+			<p class="eyebrow">QUERY</p>
+			<h1>查询中心</h1>
+			<p class="lead">快速进入日志、指标与任务查询端点。</p>
+		</header>
+
+		<section class="menu-grid">
+			<a class="menu-card" href="/api/logs">
+				<h2>日志查询</h2>
+				<p>/api/logs - 支持按 task_id/session_id/provider/level 过滤。</p>
+			</a>
+			<a class="menu-card" href="/api/metrics/summary">
+				<h2>指标汇总</h2>
+				<p>/api/metrics/summary - 成功/失败/超时与整体指标。</p>
+			</a>
+			<a class="menu-card" href="/api/metrics/providers">
+				<h2>平台指标</h2>
+				<p>/api/metrics/providers - 分平台统计（openchat/gemini/grok/deepseek）。</p>
+			</a>
+			<a class="menu-card" href="/api/tasks/not-exists">
+				<h2>任务查询示例</h2>
+				<p>使用 /api/tasks/{task_id} 查询单任务状态与结果。</p>
+			</a>
+		</section>
+
+		<section class="quick-links">
+			<a href="/admin">返回入口</a>
+			<a href="/admin/sessions">进入会话管理</a>
+			<a href="/admin/test-extract">进入测试页</a>
+			<a href="/admin/settings">进入设置页</a>
+		</section>
+	</main>
+</body>
+
+</html>

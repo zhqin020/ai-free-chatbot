@@ -97,7 +97,19 @@ class WeightedRoundRobinScheduler:
             error_message=error_message,
         )
         self.task_repo.mark_status(task_id=task_id, status=TaskStatus.PENDING)
-        self.session_repo.update_state(session_id, SessionState.READY)
+        lowered = error_message.lower()
+        if (
+            "session not logged in" in lowered
+            or "login required" in lowered
+            or "human verification" in lowered
+        ):
+            self.session_repo.update_state(
+                session_id,
+                SessionState.WAIT_LOGIN,
+                login_state="need_login",
+            )
+        else:
+            self.session_repo.update_state(session_id, SessionState.READY)
 
     def _pick_next_ready_session(self) -> Optional[SessionORM]:
         all_sessions = self.session_repo.list(enabled_only=True)
@@ -107,7 +119,7 @@ class WeightedRoundRobinScheduler:
         ready_sessions = [
             s
             for s in all_sessions
-            if s.state == SessionState.READY and s.login_state != "need_login"
+            if s.state == SessionState.READY
         ]
         if not ready_sessions:
             return None

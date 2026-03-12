@@ -2,57 +2,206 @@
 
 多浏览器 AI Chat 自动提问与结构化提取服务。
 
-当前已完成 Day 1 工程骨架：
+当前已支持：
 
-1. 配置模块（`src/config.py`）
-2. 日志模块（`src/logger.py`）
-3. 核心数据模型（`src/models/`）
-4. SQLite 数据表定义与初始化（`src/storage/database.py`, `scripts/init_db.py`）
+1. 核心 API：tasks、sessions、test/extract、metrics、logs。
+2. 多平台会话管理：openchat、gemini、grok、deepseek。
+3. 管理页面：会话管理页与测试提取页。
+4. Worker 轮询处理与提取校验链路。
 
 ## 快速开始
 
 1. 激活环境
 
-```bash
 conda activate aifree
-```
 
 2. 安装依赖
 
-```bash
 pip install -r requirements.txt
-```
 
-3. 初始化数据库
+安装 Playwright 浏览器内核（必须）：
 
-```bash
-python -m scripts.init_db
-```
+playwright install chromium
 
-4. 启动调度 worker（消费 API 创建的任务）
+3. 设置环境变量（开发环境示例）
 
-```bash
-python -m scripts.run_worker
-```
-
-调试模式（只跑固定轮询次数）：
-
-```bash
-python -m scripts.run_worker --max-loops 10
-```
-
-## 可选环境变量
-
-```bash
 export APP_NAME=ai-free-chatbot
 export APP_ENV=dev
 export LOG_LEVEL=INFO
 export DB_URL=sqlite:///data/app.db
-export API_TOKEN=your-token
-```
+export API_TOKEN=
+export WORKER_HEADLESS=1
+
+4. 初始化数据库
+
+python -m scripts.init_db
+
+5. 一键协同启动 API + worker（推荐）
+
+python -m scripts.run_stack
+
+默认会先做启动自检：
+
+1. API 端口是否可用。
+2. 数据库是否可初始化。
+3. （可选）指定平台是否存在可用会话（READY + logged_in）。
+4. 先启动 API 并等待 /healthz 就绪，再启动 worker。
+
+可选参数：
+
+python -m scripts.run_stack --no-reload
+python -m scripts.run_stack --port 8001
+python -m scripts.run_stack --worker-max-loops 10
+python -m scripts.run_stack --require-provider-ready openchat
+python -m scripts.run_stack --health-timeout-seconds 60
+python -m scripts.run_stack --health-poll-interval-seconds 1.0
+python -m scripts.run_stack --skip-checks
+
+说明：
+
+1. 在 dev 环境下，run_stack 默认会设置 WORKER_HEADLESS=0，浏览器会弹窗，便于人工登录。
+2. 若 worker 检测到会话未登录，会记录 session_login_required 日志并保持会话在 WAIT_LOGIN。
+3. 登录后请在 /admin/sessions 点击 Mark Login OK。
+
+6. 如需单独启动（调试排障时使用）
+
+API：
+
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+Worker：
+
+python -m scripts.run_worker
+
+Worker 调试模式（只跑固定轮询次数）：
+
+python -m scripts.run_worker --max-loops 10
+
+
+7. 访问入口
+
+1. 健康检查：http://127.0.0.1:8000/healthz
+2. API 文档：http://127.0.0.1:8000/docs
+3. 会话管理页：http://127.0.0.1:8000/admin/sessions
+4. 测试提取页：http://127.0.0.1:8000/admin/test-extract
+
+## 配置说明
+
+应用配置来自环境变量，定义见 [src/config.py](src/config.py)。
+
+1. APP_NAME：应用名称，默认 ai-free-chatbot。
+2. APP_ENV：运行环境，默认 dev。
+3. LOG_LEVEL：日志级别，默认 INFO。
+4. DB_URL：数据库连接，默认 sqlite:///data/app.db。
+5. API_TOKEN：预留鉴权字段，默认空。
+6. WORKER_HEADLESS：Worker 浏览器是否无头，1 为启用（默认），0 为关闭。
+
+## 常用命令
+
+1. 初始化数据库：python -m scripts.init_db
+2. 协同启动 API+Worker：python -m scripts.run_stack
+3. 启动 Worker：python -m scripts.run_worker
+4. 启动 Worker（调试）：python -m scripts.run_worker --max-loops 10
+5. 启动 API：uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+6. 浏览器稳定性单元/集成测试：pytest -q tests/test_browser_controller.py tests/test_browser_dialog_integration.py tests/test_session_pool.py tests/test_worker_processor.py tests/test_scheduler.py
+7. 启动伪 openchat 站点：python -m scripts.run_mock_openchat --port 8010
+8. 伪 openchat 浏览器集成测试（Playwright）：RUN_UI_E2E=1 pytest -q tests/test_mock_openchat_playwright_integration.py
+9. 伪 openchat 人工输入 E2E 验收（必须人工操作）：python -m scripts.manual_mock_openchat_e2e
+
+## 测试策略（当前建议）
+
+当前阶段不建议直接做端到端测试作为主验证手段，优先使用可重复、可定位问题的单元测试与集成测试。
+
+目标：围绕“打开浏览器后，稳定且安全地进入对话窗口”建立分层保障。
+
+1. 单元测试（无网络、无真实站点依赖）：
+	- `tests/test_browser_controller.py`：覆盖普通上下文与 persistent profile 启动分支、storage state 保存。
+	- `tests/test_session_pool.py`：覆盖页面健康复用与异常重建，避免失效 page 被继续复用。
+2. 集成测试（本地数据库 + 处理器协作，不走真实平台）：
+	- `tests/test_browser_dialog_integration.py`：覆盖未登录/人机验证分支（应置 WAIT_LOGIN）与已登录对话发送分支。
+	- `tests/test_worker_processor.py`、`tests/test_scheduler.py`：覆盖调度和失败状态机，确保 WAIT_LOGIN 不被重复派发。
+3. 浏览器驱动集成测试（可选，使用本地 mock 站点）：
+	- `tests/test_mock_openchat_playwright_integration.py`：真实浏览器验证 cookie -> verify -> login -> chat -> JSON 输出全流程。
+4. 验证命令：
+
+pytest -q tests/test_browser_controller.py tests/test_browser_dialog_integration.py tests/test_session_pool.py tests/test_worker_processor.py tests/test_scheduler.py
+
+RUN_UI_E2E=1 pytest -q tests/test_mock_openchat_playwright_integration.py
+
+说明：端到端验证可作为后置冒烟检查，不应替代上述分层测试。
+
+## 伪 OpenChat 站点（推荐先验收）
+
+为避免真实站点带来的不稳定因素（Cloudflare、账号状态、网络波动），建议先通过本地伪站点验收浏览器交互链路，再连接正式站点。
+
+启动命令：
+
+python -m scripts.run_mock_openchat --port 8010
+
+访问地址：
+
+http://127.0.0.1:8010/
+
+站点行为（用于测试）：
+
+1. 首屏弹出 Cookie 设置窗口，必须点击同意。
+2. 然后弹出 Cloudflare 验证窗口，点击 `Verify you are human`。
+3. 再弹出登录窗口，用户名密码可任意输入。
+4. 登录后进入对话窗口；发送任意内容，助手返回符合模板的 JSON。
+
+人工验收（强制人工输入）建议：
+
+python -m scripts.manual_mock_openchat_e2e
+
+该脚本会启动真实浏览器并分步骤暂停，必须由人工在页面完成以下动作后按回车继续：
+
+1. 点击 Cookie 同意。
+2. 点击 Verify you are human。
+3. 手工输入用户名密码并点击 Sign in。
+4. 手工输入消息并发送。
+
+只有上述步骤都完成且返回 JSON 校验通过，脚本才会输出 PASS。
+
+容错能力说明：
+
+1. 若页面缺少某个弹窗（例如没有 Verify 或没有 Cookie），脚本会自动识别并跳过该步骤。
+2. 若页面已直接进入对话状态，脚本会跳过登录前步骤并直接进入消息发送与结果校验。
+3. 若步骤校验失败，脚本不会立刻退出，而是提示重试（`r`）或退出（`q`）。
+4. 脚本会采集 chat 返回内容并解析 JSON，终端会打印标准化后的 JSON 结果。
+
+会话持久化说明：
+
+1. mock_openchat 会将 cookie/verify/login 状态保存在浏览器本地存储（localStorage）。
+2. `manual_mock_openchat_e2e` 默认使用持久化 profile 目录 `tmp/manual_mock_profile`。
+3. `manual_mock_openchat_e2e` 默认固定端口 `8010`（可用 `--port` 覆盖），避免 origin 变化导致 localStorage 丢失。
+4. mock_openchat 同时将会话状态写入 Cookie（按 host 生效，不区分端口），因此切换端口时也可恢复已登录状态。
+5. 在同一 profile 下再次打开时，可直接恢复到已登录对话状态，无需重复登录。
+6. 如需使用不同 profile，可传参：`python -m scripts.manual_mock_openchat_e2e --user-data-dir tmp/another_profile`。
+7. 如需强制从全新会话开始（清空 profile，重新走登录流程）：`python -m scripts.manual_mock_openchat_e2e --force-fresh`。
+
+与现有自动化兼容点：
+
+1. 输入框：`textarea[data-testid='chat-input']`
+2. 发送按钮：`button[data-testid='send-button']`
+3. 回复消息：`[data-testid='assistant-message']`
+
+建议接入顺序：
+
+1. 在 `/api/sessions` 将 openchat 会话 `chat_url` 先设置为 `http://127.0.0.1:8010/`。
+2. 跑单元/集成测试与 worker 本地验证，确认流程稳定。
+3. 再将 `chat_url` 切回正式站点进行冒烟验证。
+
+## 常见排查
+
+1. API 无法访问：先检查 http://127.0.0.1:8000/healthz 是否返回 status=ok。
+2. 数据库文件不存在：确认 DB_URL 使用 sqlite:///data/app.db，并先执行 python -m scripts.init_db。
+3. Worker 无任务处理：确认 API 已创建任务，且 worker 进程正在运行。
+4. 页面打不开：确认 API 服务在 8000 端口启动，访问 /admin/sessions 或 /admin/test-extract。
+5. 任务创建立即失败并返回 503：通常是浏览器内核缺失。请执行 playwright install chromium。
+6. 浏览器反复出现 Verify you are human：系统会将会话置为 WAIT_LOGIN 并暂停调度。请在弹出的浏览器中完成 Cloudflare 验证/登录，然后到 /admin/sessions 点击 Mark Login OK。
 
 ## 文档
 
-1. 技术设计: `docs/technical-design.md`
-2. 实施计划: `docs/implementation-plan.md`
+1. 技术设计: [docs/technical-design.md](docs/technical-design.md)
+2. 实施计划: [docs/implementation-plan.md](docs/implementation-plan.md)
 

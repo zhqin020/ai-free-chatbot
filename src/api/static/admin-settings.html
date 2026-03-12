@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Admin Settings</title>
+	<link rel="stylesheet" href="/ui/admin-home.css" />
+</head>
+
+<body>
+	<main class="page">
+		<header class="hero">
+			<p class="eyebrow">SETTINGS</p>
+			<h1>设置中心</h1>
+			<p class="lead">环境变量与运行参数说明。建议配合 README 一起使用。</p>
+		</header>
+
+		<section class="menu-grid">
+			<article class="menu-card">
+				<h2>核心变量</h2>
+				<p>APP_NAME / APP_ENV / LOG_LEVEL / DB_URL / API_TOKEN / WORKER_HEADLESS</p>
+			</article>
+			<article class="menu-card">
+				<h2>启动顺序</h2>
+				<p>init_db -> API(uvicorn) -> worker(run_worker)</p>
+			</article>
+		</section>
+
+		<section class="quick-links">
+			<a href="/admin">返回入口</a>
+			<a href="/admin/test-extract">进入测试页</a>
+			<a href="/admin/query">进入查询页</a>
+			<a href="/admin/sessions">进入会话管理</a>
+			<a href="/docs">查看 API 文档</a>
+		</section>
+	</main>
+</body>
+
+</html>

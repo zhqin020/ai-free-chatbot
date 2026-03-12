@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Extract Test Lab</title>
+	<link rel="stylesheet" href="/ui/admin-test-extract.css" />
+	<script defer src="/ui/admin-test-extract.js"></script>
+</head>
+
+<body>
+	<main class="page">
+		<header class="topbar">
+			<div>
+				<p class="eyebrow">QUALITY LAB</p>
+				<h1>Test Extract MVP</h1>
+				<p class="lead">Run prompt + response extraction checks against API endpoint and inspect output details.
+				</p>
+			</div>
+			<nav class="nav-links" aria-label="Admin pages">
+				<a href="/admin">Home</a>
+				<a href="/admin/settings">Settings</a>
+				<a href="/admin/query">Query</a>
+				<a href="/admin/sessions">Sessions</a>
+				<a href="/admin/test-extract" class="active">Test Extract</a>
+			</nav>
+		</header>
+
+		<section class="card">
+			<h2>Input</h2>
+			<p class="hint">可点击 <strong>Fill Requirement Sample</strong> 自动填入 requirement.md 风格的提示词模板和正文示例。</p>
+			<p class="hint">注意：Raw Response 不能使用
+				<strong>string###</strong>、<strong>结案|正在进行</strong>、<strong>YYYY-MM-DD</strong> 这类占位符。</p>
+			<form id="extract-form" class="grid">
+				<label>
+					Provider Hint
+					<select id="provider-hint" name="provider_hint">
+						<option value="">(none)</option>
+						<option value="openchat">openchat</option>
+						<option value="gemini">gemini</option>
+						<option value="grok">grok</option>
+						<option value="deepseek">deepseek</option>
+					</select>
+				</label>
+
+				<label class="span-2">
+					Prompt
+					<textarea id="prompt" name="prompt" rows="3" required placeholder="请提取案件结构化信息"></textarea>
+				</label>
+
+				<label class="span-2">
+					Document Text
+					<textarea id="document-text" name="document_text" rows="7" required placeholder="粘贴文书正文"></textarea>
+				</label>
+
+				<label class="span-2">
+					Raw Response
+					<textarea id="raw-response" name="raw_response" rows="8" required
+						placeholder="粘贴模型原始回复（可包含代码块）"></textarea>
+				</label>
+
+				<div class="span-2 actions">
+					<button id="run-btn" type="submit" class="btn btn-primary">Run Extract Test</button>
+					<button id="fill-sample" type="button" class="btn btn-secondary">Fill Requirement Sample</button>
+					<button id="clear-form" type="button" class="btn btn-ghost">Clear</button>
+				</div>
+			</form>
+		</section>
+
+		<section class="card" aria-live="polite">
+			<div class="result-head">
+				<h2>Result</h2>
+				<span id="result-status" class="status-pill status-idle">idle</span>
+			</div>
+
+			<div class="result-grid">
+				<article>
+					<h3>Generated Prompt</h3>
+					<pre id="generated-prompt" class="code">(empty)</pre>
+				</article>
+
+				<article>
+					<h3>Raw Response</h3>
+					<pre id="result-raw" class="code">(empty)</pre>
+				</article>
+
+				<article>
+					<h3>Extracted JSON</h3>
+					<pre id="result-json" class="code">(empty)</pre>
+				</article>
+
+				<article>
+					<h3>Validation Errors</h3>
+					<ul id="result-errors" class="errors">
+						<li class="muted">none</li>
+					</ul>
+					<h3>Retry Prompt</h3>
+					<pre id="retry-prompt" class="code">(empty)</pre>
+				</article>
+			</div>
+		</section>
+
+		<div id="toast" role="status" aria-live="polite"></div>
+	</main>
+</body>
+
+</html>

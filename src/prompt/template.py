@@ -5,13 +5,16 @@ EXTRACTION_FORMAT_TEMPLATE = """
 
 JSON 必须包含：
 {
+  "case_id": "string###",
   "case_status": "结案|正在进行",
-  "judgment_result": "string",
+  "judgment_result": "leave|grant|dismiss",
+  "hearing": "yes|no",
   "timeline": {
-    "filing_date": "YYYY-MM-DD|null",
-    "judge_assignment_date": "YYYY-MM-DD|null",
-    "trial_date": "YYYY-MM-DD|null",
-    "judgment_date": "YYYY-MM-DD|null"
+    "filing_date": "YYYY-MM-DD",
+    "Applicant_file_completed": "YYYY-MM-DD",
+    "reply_memo": "YYYY-MM-DD",
+    "Sent_to_Court": "YYYY-MM-DD",
+    "judgment_date": "YYYY-MM-DD"
   }
 }
 """.strip()
@@ -22,13 +25,16 @@ RETRY_FORMAT_TEMPLATE = """
 
 请仅返回一个合法 JSON 对象，结构必须是：
 {{
+  "case_id": "string###",
   "case_status": "结案|正在进行",
-  "judgment_result": "string",
+  "judgment_result": "leave|grant|dismiss",
+  "hearing": "yes|no",
   "timeline": {{
-    "filing_date": "YYYY-MM-DD|null",
-    "judge_assignment_date": "YYYY-MM-DD|null",
-    "trial_date": "YYYY-MM-DD|null",
-    "judgment_date": "YYYY-MM-DD|null"
+    "filing_date": "YYYY-MM-DD",
+    "Applicant_file_completed": "YYYY-MM-DD",
+    "reply_memo": "YYYY-MM-DD",
+    "Sent_to_Court": "YYYY-MM-DD",
+    "judgment_date": "YYYY-MM-DD"
   }}
 }}
 

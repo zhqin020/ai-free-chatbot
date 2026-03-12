@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from playwright.async_api import Page
@@ -22,16 +23,28 @@ class BrowserSessionPool:
         *,
         headless: bool = True,
         required_selector: str | None = None,
+        storage_state_dir: str = "tmp/browser_state",
+        profile_dir: str = "tmp/browser_profile",
         controller_factory: Callable[[], BrowserController] | None = None,
     ) -> None:
         self.headless = headless
         self.required_selector = required_selector
+        self.storage_state_dir = Path(storage_state_dir)
+        self.profile_dir = Path(profile_dir)
         self.controller_factory = controller_factory or BrowserController
         self._entries: dict[str, _PoolEntry] = {}
 
     @staticmethod
     def _make_key(provider: str, session_id: str) -> str:
         return f"{provider}:{session_id}"
+
+    def _state_file(self, provider: str, session_id: str) -> Path:
+        safe = f"{provider}_{session_id}".replace(":", "_")
+        return self.storage_state_dir / f"{safe}.json"
+
+    def _profile_dir(self, provider: str, session_id: str) -> Path:
+        safe = f"{provider}_{session_id}".replace(":", "_")
+        return self.profile_dir / safe
 
     async def get_page(self, session_id: str, url: str, provider: str = "openchat") -> Page:
         key = self._make_key(provider, session_id)
@@ -49,7 +62,14 @@ class BrowserSessionPool:
             await self._close_entry(key)
 
         controller = self.controller_factory()
-        await controller.start(browser_type="chromium", headless=self.headless)
+        state_file = self._state_file(provider, session_id)
+        user_data_dir = self._profile_dir(provider, session_id)
+        await controller.start(
+            browser_type="chromium",
+            headless=self.headless,
+            storage_state_path=str(state_file),
+            user_data_dir=str(user_data_dir),
+        )
         page = await controller.open_page(url)
         self._entries[key] = _PoolEntry(controller=controller, page=page, url=url)
         return page
@@ -66,6 +86,12 @@ class BrowserSessionPool:
         entry = self._entries.pop(key, None)
         if entry is None:
             return
+        try:
+            provider, session_id = key.split(":", 1)
+            state_file = self._state_file(provider, session_id)
+            await entry.controller.save_storage_state(str(state_file))
+        except Exception:
+            pass
         await entry.controller.close()
 
 

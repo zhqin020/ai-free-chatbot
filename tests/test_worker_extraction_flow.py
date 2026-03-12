@@ -19,7 +19,7 @@ class GoodJsonProcessor(TaskProcessor):
         _ = decision
         return ProcessResult(
             ok=True,
-            raw_response='{"case_status":"结案","judgment_result":"dismiss","timeline":{"filing_date":"2024-01-01"}}',
+            raw_response='{"case_id":"IMM-3-24","case_status":"结案","judgment_result":"dismiss","hearing":"no","timeline":{"filing_date":"2024-01-01","Applicant_file_completed":"2024-04-02","reply_memo":"2024-05-01","Sent_to_Court":"2024-06-14","judgment_date":"2024-10-01"}}',
         )
 
 

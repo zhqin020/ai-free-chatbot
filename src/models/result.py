@@ -14,16 +14,30 @@ class CaseStatus(str, Enum):
     ONGOING = "正在进行"
 
 
+class JudgmentResult(str, Enum):
+    LEAVE = "leave"
+    GRANT = "grant"
+    DISMISS = "dismiss"
+
+
+class HearingStatus(str, Enum):
+    YES = "yes"
+    NO = "no"
+
+
 class Timeline(BaseModel):
     filing_date: Optional[date] = None
-    judge_assignment_date: Optional[date] = None
-    trial_date: Optional[date] = None
+    Applicant_file_completed: Optional[date] = None
+    reply_memo: Optional[date] = None
+    Sent_to_Court: Optional[date] = None
     judgment_date: Optional[date] = None
 
 
 class LegalExtraction(BaseModel):
+    case_id: str = Field(min_length=1)
     case_status: CaseStatus
-    judgment_result: str = Field(min_length=1)
+    judgment_result: JudgmentResult
+    hearing: HearingStatus
     timeline: Timeline
 
 

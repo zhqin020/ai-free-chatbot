@@ -27,9 +27,17 @@ class FakeController:
         self.healthy = True
         self.page: FakePage | None = None
 
-    async def start(self, browser_type: str = "chromium", headless: bool = True) -> None:
+    async def start(
+        self,
+        browser_type: str = "chromium",
+        headless: bool = True,
+        storage_state_path: str | None = None,
+        user_data_dir: str | None = None,
+    ) -> None:
         _ = browser_type
         _ = headless
+        _ = storage_state_path
+        _ = user_data_dir
         self.started += 1
 
     async def open_page(self, url: str):

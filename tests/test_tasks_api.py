@@ -8,6 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.config import reset_settings_cache
+from src.models.session import Provider
+from src.models.task import TaskStatus
+from src.storage.repositories import TaskRepository
 from src.storage.database import init_db
 
 
@@ -68,3 +71,83 @@ def test_get_task_by_id(client: TestClient) -> None:
 def test_get_task_not_found(client: TestClient) -> None:
     response = client.get("/api/tasks/not-exists")
     assert response.status_code == 404
+
+
+def test_create_task_rejected_when_runtime_unavailable(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.api.routers import tasks as tasks_router
+
+    monkeypatch.setattr(
+        tasks_router,
+        "check_provider_runtime",
+        lambda _provider: (False, "runtime_unavailable: missing chromium"),
+    )
+
+    response = client.post(
+        "/api/tasks",
+        json={
+            "external_id": "ext-runtime-fail",
+            "prompt": "请提取要点",
+            "document_text": "这是文书正文",
+            "provider_hint": "openchat",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "runtime_unavailable" in response.json()["detail"]
+
+
+def test_get_task_result_without_raw_response(client: TestClient) -> None:
+    create_response = client.post(
+        "/api/tasks",
+        json={
+            "prompt": "提取",
+            "document_text": "正文",
+            "provider_hint": "openchat",
+        },
+    )
+    task_id = create_response.json()["id"]
+
+    response = client.get(f"/api/tasks/{task_id}/result")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["task_id"] == task_id
+    assert body["status"] == "PENDING"
+    assert body["provider"] == "openchat"
+    assert body["raw_response"] is None
+    assert body["extracted_json"] is None
+    assert body["error_message"] is None
+    assert body["retry_count"] == 0
+
+
+def test_get_task_result_with_parsed_raw_response(client: TestClient) -> None:
+    create_response = client.post(
+        "/api/tasks",
+        json={
+            "prompt": "提取",
+            "document_text": "正文",
+            "provider_hint": "openchat",
+        },
+    )
+    task_id = create_response.json()["id"]
+
+    repo = TaskRepository()
+    repo.save_raw_response(
+        task_id=task_id,
+        provider=Provider.OPENCHAT,
+        response_text=(
+            '{"case_id":"IMM-3-24","case_status":"结案","judgment_result":"dismiss",'
+            '"hearing":"no","timeline":{"filing_date":"2024-01-01"}}'
+        ),
+    )
+    repo.mark_status(task_id, TaskStatus.COMPLETED)
+
+    response = client.get(f"/api/tasks/{task_id}/result")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["task_id"] == task_id
+    assert body["status"] == "COMPLETED"
+    assert body["provider"] == "openchat"
+    assert body["raw_response"] is not None
+    assert body["extracted_json"]["case_id"] == "IMM-3-24"
+    assert body["extracted_json"]["case_status"] == "结案"
+    assert body["error_message"] is None
