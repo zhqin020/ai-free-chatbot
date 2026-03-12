@@ -31,3 +31,7 @@ def get_settings() -> Settings:
         db_url=os.getenv("DB_URL", "sqlite:///data/app.db"),
         api_token=os.getenv("API_TOKEN", ""),
     )
+
+
+def reset_settings_cache() -> None:
+    get_settings.cache_clear()

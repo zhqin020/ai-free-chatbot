@@ -29,6 +29,18 @@ pip install -r requirements.txt
 python -m scripts.init_db
 ```
 
+4. 启动调度 worker（消费 API 创建的任务）
+
+```bash
+python -m scripts.run_worker
+```
+
+调试模式（只跑固定轮询次数）：
+
+```bash
+python -m scripts.run_worker --max-loops 10
+```
+
 ## 可选环境变量
 
 ```bash

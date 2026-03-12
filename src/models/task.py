@@ -29,5 +29,6 @@ class TaskRead(BaseModel):
     status: TaskStatus
     external_id: Optional[str] = None
     provider_hint: Optional[Provider] = None
+    latest_trace_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime

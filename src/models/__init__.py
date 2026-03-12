@@ -1,5 +1,12 @@
 from src.models.result import CaseStatus, LegalExtraction, TaskResult, Timeline
-from src.models.session import Provider, SessionConfig, SessionState, SessionStatus
+from src.models.session import (
+	Provider,
+	SessionConfig,
+	SessionRead,
+	SessionState,
+	SessionStatus,
+	SessionUpdate,
+)
 from src.models.task import TaskCreate, TaskRead, TaskStatus
 
 __all__ = [
@@ -7,8 +14,10 @@ __all__ = [
 	"LegalExtraction",
 	"Provider",
 	"SessionConfig",
+	"SessionRead",
 	"SessionState",
 	"SessionStatus",
+	"SessionUpdate",
 	"TaskCreate",
 	"TaskRead",
 	"TaskResult",

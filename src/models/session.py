@@ -30,9 +30,29 @@ class SessionConfig(BaseModel):
     priority: int = 100
 
 
+class SessionUpdate(BaseModel):
+    provider: Provider
+    chat_url: str = Field(min_length=1)
+    enabled: bool = True
+    priority: int = 100
+
+
 class SessionStatus(BaseModel):
     id: str
     state: SessionState
     enabled: bool = True
     login_state: str = "unknown"
     last_seen_at: Optional[datetime] = None
+
+
+class SessionRead(BaseModel):
+    id: str
+    provider: Provider
+    chat_url: str
+    enabled: bool
+    priority: int
+    state: SessionState
+    login_state: str
+    last_seen_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime

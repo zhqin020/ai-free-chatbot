@@ -3,6 +3,7 @@ from src.storage.database import (
 	ExtractedResultORM,
 	RawResponseORM,
 	SessionORM,
+	SystemLogORM,
 	SystemMetricHourlyORM,
 	TaskAttemptORM,
 	TaskORM,
@@ -11,12 +12,14 @@ from src.storage.database import (
 	init_db,
 	session_scope,
 )
+from src.storage.repositories import AttemptRepository, SessionRepository, TaskRepository
 
 __all__ = [
 	"Base",
 	"ExtractedResultORM",
 	"RawResponseORM",
 	"SessionORM",
+	"SystemLogORM",
 	"SystemMetricHourlyORM",
 	"TaskAttemptORM",
 	"TaskORM",
@@ -24,5 +27,8 @@ __all__ = [
 	"get_session_maker",
 	"init_db",
 	"session_scope",
+	"AttemptRepository",
+	"SessionRepository",
+	"TaskRepository",
 ]
 

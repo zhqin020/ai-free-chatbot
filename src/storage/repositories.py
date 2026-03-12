@@ -1,0 +1,350 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from datetime import date
+from typing import Optional
+from uuid import uuid4
+
+from sqlalchemy import func, select
+
+from src.models.session import Provider, SessionConfig, SessionState
+from src.models.result import CaseStatus
+from src.models.task import TaskCreate, TaskStatus
+from src.storage.database import (
+    ExtractedResultORM,
+    RawResponseORM,
+    SessionORM,
+    SystemLogORM,
+    TaskAttemptORM,
+    TaskORM,
+    session_scope,
+)
+
+
+class SessionRepository:
+    def upsert(self, config: SessionConfig) -> SessionORM:
+        with session_scope() as session:
+            row = session.get(SessionORM, config.id)
+            if row is None:
+                row = SessionORM(
+                    id=config.id,
+                    provider=config.provider,
+                    chat_url=config.chat_url,
+                    enabled=config.enabled,
+                    priority=config.priority,
+                    state=SessionState.READY,
+                    login_state="unknown",
+                )
+                session.add(row)
+            else:
+                row.provider = config.provider
+                row.chat_url = config.chat_url
+                row.enabled = config.enabled
+                row.priority = config.priority
+                row.updated_at = datetime.now(UTC)
+            session.flush()
+            session.refresh(row)
+            return row
+
+    def list(self, enabled_only: bool = False) -> list[SessionORM]:
+        with session_scope() as session:
+            stmt = select(SessionORM)
+            if enabled_only:
+                stmt = stmt.where(SessionORM.enabled.is_(True))
+            rows = session.execute(stmt.order_by(SessionORM.priority.asc(), SessionORM.id.asc())).scalars().all()
+            return rows
+
+    def get(self, session_id: str) -> Optional[SessionORM]:
+        with session_scope() as session:
+            return session.get(SessionORM, session_id)
+
+    def update_state(self, session_id: str, state: SessionState, login_state: Optional[str] = None) -> bool:
+        with session_scope() as session:
+            row = session.get(SessionORM, session_id)
+            if row is None:
+                return False
+            row.state = state
+            if login_state is not None:
+                row.login_state = login_state
+            row.last_seen_at = datetime.now(UTC)
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return True
+
+    def delete(self, session_id: str) -> bool:
+        with session_scope() as session:
+            row = session.get(SessionORM, session_id)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
+
+
+class TaskRepository:
+    def create(self, payload: TaskCreate) -> TaskORM:
+        now = datetime.now(UTC)
+        with session_scope() as session:
+            row = TaskORM(
+                id=str(uuid4()),
+                external_id=payload.external_id,
+                status=TaskStatus.PENDING,
+                prompt_text=payload.prompt,
+                document_text=payload.document_text,
+                provider_hint=payload.provider_hint,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.flush()
+            session.refresh(row)
+            return row
+
+    def get(self, task_id: str) -> Optional[TaskORM]:
+        with session_scope() as session:
+            return session.get(TaskORM, task_id)
+
+    def claim_next_pending(self, provider_hint: Optional[Provider] = None) -> Optional[TaskORM]:
+        with session_scope() as session:
+            stmt = select(TaskORM).where(TaskORM.status == TaskStatus.PENDING)
+            if provider_hint is not None:
+                stmt = stmt.where(
+                    (TaskORM.provider_hint.is_(None)) | (TaskORM.provider_hint == provider_hint)
+                )
+
+            row = session.execute(stmt.order_by(TaskORM.created_at.asc())).scalars().first()
+            if row is None:
+                return None
+            row.status = TaskStatus.DISPATCHED
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            session.refresh(row)
+            return row
+
+    def mark_status(self, task_id: str, status: TaskStatus) -> bool:
+        with session_scope() as session:
+            row = session.get(TaskORM, task_id)
+            if row is None:
+                return False
+            row.status = status
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return True
+
+    def recover_timeouts(self, timeout_seconds: int, max_retries: int = 3) -> list[str]:
+        threshold = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
+        recovered: list[str] = []
+        with session_scope() as session:
+            dispatched = session.execute(
+                select(TaskORM).where(
+                    TaskORM.status == TaskStatus.DISPATCHED,
+                    TaskORM.updated_at < threshold,
+                )
+            ).scalars().all()
+
+            for task in dispatched:
+                attempts = session.execute(
+                    select(func.count(TaskAttemptORM.id)).where(TaskAttemptORM.task_id == task.id)
+                ).scalar_one()
+                if attempts >= max_retries:
+                    task.status = TaskStatus.FAILED
+                else:
+                    task.status = TaskStatus.PENDING
+                task.updated_at = datetime.now(UTC)
+                recovered.append(task.id)
+
+            session.flush()
+        return recovered
+
+    def save_raw_response(self, task_id: str, provider: Provider, response_text: str) -> None:
+        with session_scope() as session:
+            row = RawResponseORM(
+                task_id=task_id,
+                provider=provider,
+                response_text=response_text,
+            )
+            session.add(row)
+            session.flush()
+
+    def save_extracted_result(
+        self,
+        task_id: str,
+        *,
+        valid_schema: bool,
+        extraction_error: str | None = None,
+        case_status: CaseStatus | str | None = None,
+        judgment_result: str | None = None,
+        filing_date: date | None = None,
+        judge_assignment_date: date | None = None,
+        trial_date: date | None = None,
+        judgment_date: date | None = None,
+    ) -> None:
+        normalized_status: CaseStatus | None
+        if case_status is None or isinstance(case_status, CaseStatus):
+            normalized_status = case_status
+        else:
+            normalized_status = CaseStatus(case_status)
+
+        with session_scope() as session:
+            row = ExtractedResultORM(
+                task_id=task_id,
+                case_status=normalized_status,
+                judgment_result=judgment_result,
+                filing_date=filing_date,
+                judge_assignment_date=judge_assignment_date,
+                trial_date=trial_date,
+                judgment_date=judgment_date,
+                valid_schema=valid_schema,
+                extraction_error=extraction_error,
+            )
+            session.add(row)
+            session.flush()
+
+    def update_prompt(self, task_id: str, prompt_text: str) -> bool:
+        with session_scope() as session:
+            row = session.get(TaskORM, task_id)
+            if row is None:
+                return False
+            row.prompt_text = prompt_text
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return True
+
+
+class AttemptRepository:
+    def start_attempt(self, task_id: str, session_id: str, attempt_no: int) -> TaskAttemptORM:
+        with session_scope() as session:
+            row = TaskAttemptORM(
+                task_id=task_id,
+                session_id=session_id,
+                attempt_no=attempt_no,
+                status="STARTED",
+                started_at=datetime.now(UTC),
+            )
+            session.add(row)
+            session.flush()
+            session.refresh(row)
+            return row
+
+    def finish_attempt(
+        self,
+        attempt_id: int,
+        status: str,
+        latency_ms: Optional[int] = None,
+        error_message: Optional[str] = None,
+    ) -> bool:
+        with session_scope() as session:
+            row = session.get(TaskAttemptORM, attempt_id)
+            if row is None:
+                return False
+            row.status = status
+            row.latency_ms = latency_ms
+            row.error_message = error_message
+            row.finished_at = datetime.now(UTC)
+            session.flush()
+            return True
+
+    def next_attempt_no(self, task_id: str) -> int:
+        with session_scope() as session:
+            count = session.execute(
+                select(func.count(TaskAttemptORM.id)).where(TaskAttemptORM.task_id == task_id)
+            ).scalar_one()
+            return int(count) + 1
+
+    def get_attempt_count(self, task_id: str) -> int:
+        with session_scope() as session:
+            count = session.execute(
+                select(func.count(TaskAttemptORM.id)).where(TaskAttemptORM.task_id == task_id)
+            ).scalar_one()
+            return int(count)
+
+
+class LogRepository:
+    def add_log(
+        self,
+        *,
+        trace_id: str | None = None,
+        level: str,
+        event: str,
+        message: str,
+        provider: Provider | None = None,
+        task_id: str | None = None,
+        session_id: str | None = None,
+    ) -> SystemLogORM:
+        with session_scope() as session:
+            row = SystemLogORM(
+                trace_id=trace_id,
+                level=level.upper(),
+                provider=provider,
+                task_id=task_id,
+                session_id=session_id,
+                event=event,
+                message=message,
+            )
+            session.add(row)
+            session.flush()
+            session.refresh(row)
+            return row
+
+    def query_logs(
+        self,
+        *,
+        trace_id: str | None = None,
+        level: str | None = None,
+        provider: Provider | None = None,
+        task_id: str | None = None,
+        session_id: str | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[SystemLogORM], int]:
+        if page < 1:
+            page = 1
+        page_size = max(1, min(page_size, 200))
+
+        with session_scope() as session:
+            stmt = select(SystemLogORM)
+            count_stmt = select(func.count(SystemLogORM.id))
+
+            if level:
+                stmt = stmt.where(SystemLogORM.level == level.upper())
+                count_stmt = count_stmt.where(SystemLogORM.level == level.upper())
+            if trace_id:
+                stmt = stmt.where(SystemLogORM.trace_id == trace_id)
+                count_stmt = count_stmt.where(SystemLogORM.trace_id == trace_id)
+            if provider is not None:
+                stmt = stmt.where(SystemLogORM.provider == provider)
+                count_stmt = count_stmt.where(SystemLogORM.provider == provider)
+            if task_id:
+                stmt = stmt.where(SystemLogORM.task_id == task_id)
+                count_stmt = count_stmt.where(SystemLogORM.task_id == task_id)
+            if session_id:
+                stmt = stmt.where(SystemLogORM.session_id == session_id)
+                count_stmt = count_stmt.where(SystemLogORM.session_id == session_id)
+            if start_at is not None:
+                stmt = stmt.where(SystemLogORM.created_at >= start_at)
+                count_stmt = count_stmt.where(SystemLogORM.created_at >= start_at)
+            if end_at is not None:
+                stmt = stmt.where(SystemLogORM.created_at <= end_at)
+                count_stmt = count_stmt.where(SystemLogORM.created_at <= end_at)
+
+            total = int(session.execute(count_stmt).scalar_one())
+            rows = session.execute(
+                stmt.order_by(SystemLogORM.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).scalars().all()
+            return rows, total
+
+    def get_latest_trace_id(self, task_id: str) -> str | None:
+        with session_scope() as session:
+            row = session.execute(
+                select(SystemLogORM.trace_id)
+                .where(SystemLogORM.task_id == task_id)
+                .where(SystemLogORM.trace_id.is_not(None))
+                .order_by(SystemLogORM.created_at.desc(), SystemLogORM.id.desc())
+                .limit(1)
+            ).first()
+            if row is None:
+                return None
+            return row[0]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Generator
 
 from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text, create_engine
@@ -15,6 +15,10 @@ from src.models.task import TaskStatus
 
 class Base(DeclarativeBase):
     pass
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
 
 
 class SessionORM(Base):
@@ -33,10 +37,10 @@ class SessionORM(Base):
     login_state: Mapped[str] = mapped_column(String(32), default="unknown", nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=utcnow, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
 
     attempts: Mapped[list[TaskAttemptORM]] = relationship(back_populates="session")
@@ -56,10 +60,10 @@ class TaskORM(Base):
         Enum(Provider, native_enum=False), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=utcnow, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
 
     attempts: Mapped[list[TaskAttemptORM]] = relationship(back_populates="task")
@@ -78,7 +82,7 @@ class TaskAttemptORM(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=utcnow, nullable=False
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -96,7 +100,7 @@ class RawResponseORM(Base):
     )
     response_text: Mapped[str] = mapped_column(Text, nullable=False)
     captured_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=utcnow, nullable=False
     )
 
     task: Mapped[TaskORM] = relationship(back_populates="raw_responses")
@@ -118,7 +122,7 @@ class ExtractedResultORM(Base):
     valid_schema: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=utcnow, nullable=False
     )
 
     task: Mapped[TaskORM] = relationship(back_populates="extracted_results")
@@ -136,6 +140,24 @@ class SystemMetricHourlyORM(Base):
     failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     timeout_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     avg_latency_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class SystemLogORM(Base):
+    __tablename__ = "system_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    level: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[Provider | None] = mapped_column(
+        Enum(Provider, native_enum=False), nullable=True
+    )
+    task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    event: Mapped[str] = mapped_column(String(64), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
 
 
 def get_engine(echo: bool = False):
