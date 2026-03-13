@@ -5,126 +5,138 @@
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<title>Session Ready Console</title>
+	<link rel="stylesheet" href="/ui/admin-shell.css" />
 	<link rel="stylesheet" href="/ui/admin-sessions.css" />
 	<script defer src="/ui/admin-sessions.js"></script>
 </head>
 
-<body>
+<body class="admin-shell-body">
 	<div class="bg-grid" aria-hidden="true"></div>
-	<main class="shell">
-		<header class="hero">
-			<p class="kicker">AI OPS</p>
-			<h1>人工操作结果回填面板</h1>
-			<p class="subtitle">自动发现 provider 会话、查看当前状态，并回填人工处理结果（是否就绪）。
-			</p>
-			<p class="subtitle nav-inline">
-				<a href="/admin">入口</a>
-				<a href="/admin/settings">设置</a>
-				<a href="/admin/test-extract">测试</a>
+	<div class="admin-shell-layout">
+		<aside class="admin-sidebar" aria-label="主菜单">
+			<h2 class="brand">AI Ops</h2>
+			<p class="brand-sub">管理后台</p>
+			<nav class="admin-menu">
+				<a href="/admin">概览</a>
+				<a href="/admin/settings">Provider</a>
+				<a class="active" href="/admin/sessions">会话</a>
+				<a href="/admin/worker">Worker</a>
+				<a href="/admin/mock-openai">Mock OpenAI</a>
+				<a href="/admin/test-extract">测试提取</a>
 				<a href="/admin/query">查询</a>
-			</p>
-		</header>
+			</nav>
+		</aside>
+		<div class="admin-content">
+			<main class="shell">
+				<header class="hero">
+					<p class="kicker">AI OPS</p>
+					<h1>人工操作结果回填面板</h1>
+					<p class="subtitle">自动发现 provider 会话、查看当前状态，并回填人工处理结果（是否就绪）。
+					</p>
+				</header>
 
-		<section class="panel" aria-label="Session list">
-			<div class="panel-head">
-				<h2>会话状态</h2>
-				<button id="refresh-btn" type="button" class="btn btn-secondary">发现并刷新</button>
-				<div class="tiny-stats">
-					<span id="count-total">Total: 0</span>
-					<span id="count-filtered">Filtered: 0</span>
-					<span id="count-enabled">Enabled: 0</span>
-					<span id="count-wait-login">Wait login: 0</span>
-				</div>
-			</div>
+				<section class="panel" aria-label="Session list">
+					<div class="panel-head">
+						<h2>会话状态</h2>
+						<button id="refresh-btn" type="button" class="btn btn-secondary">发现并刷新</button>
+						<div class="tiny-stats">
+							<span id="count-total">Total: 0</span>
+							<span id="count-filtered">Filtered: 0</span>
+							<span id="count-enabled">Enabled: 0</span>
+							<span id="count-wait-login">Wait login: 0</span>
+						</div>
+					</div>
 
-			<div class="filter-bar" aria-label="Session filters">
-				<label>
-					搜索
-					<input id="filter-keyword" placeholder="id, provider, login state" />
-				</label>
-				<label>
-					Provider
-					<select id="filter-provider">
-						<option value="all">all</option>
-						<option value="openchat">openchat</option>
-						<option value="gemini">gemini</option>
-						<option value="grok">grok</option>
-						<option value="deepseek">deepseek</option>
-					</select>
-				</label>
-				<label>
-					状态
-					<select id="filter-state">
-						<option value="all">all</option>
-						<option value="READY">READY</option>
-						<option value="BUSY">BUSY</option>
-						<option value="WAIT_LOGIN">WAIT_LOGIN</option>
-						<option value="UNHEALTHY">UNHEALTHY</option>
-						<option value="RECOVERING">RECOVERING</option>
-					</select>
-				</label>
-				<label>
-					启用
-					<select id="filter-enabled">
-						<option value="all">all</option>
-						<option value="yes">yes</option>
-						<option value="no">no</option>
-					</select>
-				</label>
-				<div class="filter-actions">
-					<button id="clear-filters" type="button" class="btn btn-ghost">清空筛选</button>
-				</div>
-			</div>
+					<div class="filter-bar" aria-label="Session filters">
+						<label>
+							搜索
+							<input id="filter-keyword" placeholder="id, provider, login state" />
+						</label>
+						<label>
+							Provider
+							<select id="filter-provider">
+								<option value="all">all</option>
+								<option value="openchat">openchat</option>
+								<option value="gemini">gemini</option>
+								<option value="grok">grok</option>
+								<option value="deepseek">deepseek</option>
+							</select>
+						</label>
+						<label>
+							状态
+							<select id="filter-state">
+								<option value="all">all</option>
+								<option value="READY">READY</option>
+								<option value="BUSY">BUSY</option>
+								<option value="WAIT_LOGIN">WAIT_LOGIN</option>
+								<option value="UNHEALTHY">UNHEALTHY</option>
+								<option value="RECOVERING">RECOVERING</option>
+							</select>
+						</label>
+						<label>
+							启用
+							<select id="filter-enabled">
+								<option value="all">all</option>
+								<option value="yes">yes</option>
+								<option value="no">no</option>
+							</select>
+						</label>
+						<div class="filter-actions">
+							<button id="clear-filters" type="button" class="btn btn-ghost">清空筛选</button>
+						</div>
+					</div>
 
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>ID</th>
-							<th>Session Name</th>
-							<th>HTTP Session</th>
-							<th>Provider</th>
-							<th>状态</th>
-							<th>登录状态</th>
-							<th>开始时间</th>
-							<th>Priority</th>
-							<th>启用</th>
-							<th>更新时间</th>
-							<th>操作（统计/验证/就绪/打开）</th>
-						</tr>
-					</thead>
-					<tbody id="session-rows"></tbody>
-				</table>
-			</div>
-		</section>
+					<div class="table-wrap">
+						<table>
+							<thead>
+								<tr>
+									<th>ID</th>
+									<th>Session Name</th>
+									<th>HTTP Session</th>
+									<th>Provider</th>
+									<th>状态</th>
+									<th>登录状态</th>
+									<th>开始时间</th>
+									<th>Priority</th>
+									<th>启用</th>
+									<th>更新时间</th>
+									<th>操作（统计/验证/就绪/打开）</th>
+								</tr>
+							</thead>
+							<tbody id="session-rows"></tbody>
+						</table>
+					</div>
+				</section>
 
-		<section class="panel" aria-label="Recent errors">
-			<div class="panel-head">
-				<h2>最近错误摘要</h2>
-				<button id="refresh-errors" type="button" class="btn btn-ghost">刷新错误</button>
-			</div>
-			<div id="error-summary" class="error-summary">
-				<p class="muted">暂无错误。</p>
-			</div>
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Time</th>
-							<th>Level</th>
-							<th>Provider</th>
-							<th>Session</th>
-							<th>Event</th>
-							<th>Message</th>
-						</tr>
-					</thead>
-					<tbody id="error-rows"></tbody>
-				</table>
-			</div>
-		</section>
+				<section class="panel" aria-label="Recent errors">
+					<div class="panel-head">
+						<h2>最近错误摘要</h2>
+						<button id="refresh-errors" type="button" class="btn btn-ghost">刷新错误</button>
+					</div>
+					<div id="error-summary" class="error-summary">
+						<p class="muted">暂无错误。</p>
+					</div>
+					<div class="table-wrap">
+						<table>
+							<thead>
+								<tr>
+									<th>Time</th>
+									<th>Level</th>
+									<th>Provider</th>
+									<th>Session</th>
+									<th>Event</th>
+									<th>Message</th>
+								</tr>
+							</thead>
+							<tbody id="error-rows"></tbody>
+						</table>
+					</div>
+				</section>
 
-		<div id="toast" role="status" aria-live="polite"></div>
-	</main>
+				<div id="toast" role="status" aria-live="polite"></div>
+			</main>
+		</div>
+	</div>
 </body>
 
 </html>

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Worker Manager</title>
+	<link rel="stylesheet" href="/ui/admin-shell.css" />
+	<link rel="stylesheet" href="/ui/admin-worker.css" />
+	<script defer src="/ui/admin-worker.js"></script>
+</head>
+
+<body class="admin-shell-body">
+	<div class="admin-shell-layout">
+		<aside class="admin-sidebar" aria-label="主菜单">
+			<h2 class="brand">AI Ops</h2>
+			<p class="brand-sub">管理后台</p>
+			<nav class="admin-menu">
+				<a href="/admin">概览</a>
+				<a href="/admin/settings">Provider</a>
+				<a href="/admin/sessions">会话</a>
+				<a class="active" href="/admin/worker">Worker</a>
+				<a href="/admin/mock-openai">Mock OpenAI</a>
+				<a href="/admin/test-extract">测试提取</a>
+				<a href="/admin/query">查询</a>
+			</nav>
+		</aside>
+		<div class="admin-content">
+			<main class="page">
+				<header class="hero">
+					<p class="eyebrow">WORKER OPS</p>
+					<h1>Worker 管理</h1>
+					<p class="lead">查看 worker 运行状态，执行启动、停止操作。</p>
+				</header>
+
+				<section class="panel" aria-label="worker status">
+					<div class="panel-head">
+						<h2>运行状态</h2>
+						<button id="refresh-btn" type="button" class="btn btn-secondary">刷新状态</button>
+					</div>
+					<div class="status-grid">
+						<div class="status-item">
+							<p class="label">Running</p>
+							<p id="running-text" class="value">unknown</p>
+						</div>
+						<div class="status-item">
+							<p class="label">PID</p>
+							<p id="pid-text" class="value">-</p>
+						</div>
+						<div class="status-item">
+							<p class="label">Managed By API</p>
+							<p id="managed-text" class="value">-</p>
+						</div>
+						<div class="status-item">
+							<p class="label">Uptime (s)</p>
+							<p id="uptime-text" class="value">-</p>
+						</div>
+						<div class="status-item span-2">
+							<p class="label">Started At</p>
+							<p id="started-at-text" class="value mono">-</p>
+						</div>
+						<div class="status-item span-2">
+							<p class="label">Command</p>
+							<p id="command-text" class="value mono">-</p>
+						</div>
+						<div class="status-item span-2">
+							<p class="label">Message</p>
+							<p id="message-text" class="value">-</p>
+						</div>
+					</div>
+				</section>
+
+				<section class="panel" aria-label="worker control">
+					<div class="panel-head">
+						<h2>控制</h2>
+					</div>
+					<div class="actions">
+						<button id="start-btn" type="button" class="btn btn-primary">启动 Worker</button>
+						<button id="stop-btn" type="button" class="btn btn-danger">停止 Worker</button>
+					</div>
+				</section>
+
+				<div id="toast" role="status" aria-live="polite"></div>
+			</main>
+		</div>
+	</div>
+</body>
+
+</html>

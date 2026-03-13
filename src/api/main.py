@@ -9,10 +9,12 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.routers.logs import router as logs_router
 from src.api.routers.metrics import router as metrics_router
+from src.api.routers.mock_openai import router as mock_openai_router
 from src.api.routers.providers import router as providers_router
 from src.api.routers.sessions import router as sessions_router
 from src.api.routers.test_extract import router as test_extract_router
 from src.api.routers.tasks import router as tasks_router
+from src.api.routers.worker import router as worker_router
 from src.config import get_settings
 from src.logging_mp import setup_logging
 from src.storage.database import init_db
@@ -65,10 +67,20 @@ def create_app() -> FastAPI:
     def admin_test_extract() -> FileResponse:
         return FileResponse(static_dir / "admin-test-extract.html")
 
+    @app.get("/admin/worker", include_in_schema=False)
+    def admin_worker() -> FileResponse:
+        return FileResponse(static_dir / "admin-worker.html")
+
+    @app.get("/admin/mock-openai", include_in_schema=False)
+    def admin_mock_openai() -> FileResponse:
+        return FileResponse(static_dir / "admin-mock-openai.html")
+
     app.include_router(tasks_router)
     app.include_router(sessions_router)
     app.include_router(providers_router)
     app.include_router(test_extract_router)
+    app.include_router(worker_router)
+    app.include_router(mock_openai_router)
     app.include_router(metrics_router)
     app.include_router(logs_router)
     return app

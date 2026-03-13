@@ -33,6 +33,8 @@ def test_admin_hub_page(client: TestClient) -> None:
     assert response.status_code == 200
     assert "统一管理入口" in response.text
     assert "设置" in response.text
+    assert "Worker" in response.text
+    assert "Mock OpenAI" in response.text
     assert "测试" in response.text
     assert "查询" in response.text
 
@@ -40,14 +42,36 @@ def test_admin_hub_page(client: TestClient) -> None:
 def test_admin_settings_and_query_pages(client: TestClient) -> None:
     settings_response = client.get("/admin/settings")
     assert settings_response.status_code == 200
-    assert "设置中心" in settings_response.text
+    assert "Provider Settings Console" in settings_response.text
 
     query_response = client.get("/admin/query")
     assert query_response.status_code == 200
     assert "查询中心" in query_response.text
 
 
+def test_admin_worker_page(client: TestClient) -> None:
+    response = client.get("/admin/worker")
+    assert response.status_code == 200
+    assert "Worker 管理" in response.text
+    assert "/ui/admin-worker.js" in response.text
+
+
+def test_admin_mock_openai_page(client: TestClient) -> None:
+    response = client.get("/admin/mock-openai")
+    assert response.status_code == 200
+    assert "Mock OpenAI 管理" in response.text
+    assert "/ui/admin-mock-openai.js" in response.text
+
+
 def test_admin_hub_static_assets(client: TestClient) -> None:
     css_response = client.get("/ui/admin-home.css")
     assert css_response.status_code == 200
     assert "text/css" in css_response.headers["content-type"]
+
+    worker_css_response = client.get("/ui/admin-worker.css")
+    assert worker_css_response.status_code == 200
+    assert "text/css" in worker_css_response.headers["content-type"]
+
+    mock_openai_css_response = client.get("/ui/admin-mock-openai.css")
+    assert mock_openai_css_response.status_code == 200
+    assert "text/css" in mock_openai_css_response.headers["content-type"]

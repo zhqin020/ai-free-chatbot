@@ -5,78 +5,90 @@
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<title>Admin Settings</title>
+	<link rel="stylesheet" href="/ui/admin-shell.css" />
 	<link rel="stylesheet" href="/ui/admin-settings.css" />
 	<script defer src="/ui/admin-settings.js"></script>
 </head>
 
-<body>
-	<main class="page">
-		<header class="topbar">
-			<div>
-				<p class="eyebrow">SETTINGS</p>
-				<h1>Provider Settings Console</h1>
-				<p class="lead">管理 provider（增删改）、打开浏览器、清空 session、查看 session。</p>
-			</div>
-			<nav class="links">
-				<a href="/admin">Home</a>
-				<a href="/admin/query">Query</a>
-				<a href="/admin/sessions">Sessions</a>
-				<a href="/admin/test-extract">Test Extract</a>
+<body class="admin-shell-body">
+	<div class="admin-shell-layout">
+		<aside class="admin-sidebar" aria-label="主菜单">
+			<h2 class="brand">AI Ops</h2>
+			<p class="brand-sub">管理后台</p>
+			<nav class="admin-menu">
+				<a href="/admin">概览</a>
+				<a class="active" href="/admin/settings">Provider</a>
+				<a href="/admin/sessions">会话</a>
+				<a href="/admin/worker">Worker</a>
+				<a href="/admin/mock-openai">Mock OpenAI</a>
+				<a href="/admin/test-extract">测试提取</a>
+				<a href="/admin/query">查询</a>
 			</nav>
-		</header>
+		</aside>
+		<div class="admin-content">
+			<main class="page">
+				<header class="topbar">
+					<div>
+						<p class="eyebrow">SETTINGS</p>
+						<h1>Provider Settings Console</h1>
+						<p class="lead">管理 provider（增删改）、打开浏览器、清空 session、查看 session。</p>
+					</div>
+				</header>
 
-		<section class="panel" aria-label="Provider form">
-			<div class="panel-head">
-				<h2 id="form-title">Create Provider</h2>
-				<div class="actions">
-					<button id="refresh-btn" type="button" class="btn btn-secondary">Refresh</button>
-				</div>
-			</div>
-			<form id="provider-form" class="form-grid">
-				<input id="editing-name" type="hidden" />
-				<label>
-					Name
-					<input id="provider-name" required placeholder="mock_openai" />
-				</label>
-				<label>
-					URL
-					<input id="provider-url" required placeholder="https://chat.deepseek.com/" />
-				</label>
-				<label>
-					Icon
-					<input id="provider-icon" required placeholder="🤖" />
-				</label>
-				<div class="actions span-3">
-					<button id="submit-btn" type="submit" class="btn btn-primary">Create</button>
-					<button id="reset-btn" type="button" class="btn btn-ghost">Reset</button>
-				</div>
-			</form>
-		</section>
+				<section class="panel" aria-label="Provider form">
+					<div class="panel-head">
+						<h2 id="form-title">Create Provider</h2>
+						<div class="actions">
+							<button id="refresh-btn" type="button" class="btn btn-secondary">Refresh</button>
+						</div>
+					</div>
+					<form id="provider-form" class="form-grid">
+						<input id="editing-name" type="hidden" />
+						<label>
+							Name
+							<input id="provider-name" required placeholder="mock_openai" />
+						</label>
+						<label>
+							URL
+							<input id="provider-url" required placeholder="https://chat.deepseek.com/" />
+						</label>
+						<label>
+							Icon
+							<input id="provider-icon" required placeholder="🤖" />
+						</label>
+						<div class="actions span-3">
+							<button id="submit-btn" type="submit" class="btn btn-primary">Create</button>
+							<button id="reset-btn" type="button" class="btn btn-ghost">Reset</button>
+						</div>
+					</form>
+				</section>
 
-		<section class="panel" aria-label="Provider list">
-			<div class="panel-head">
-				<h2>Providers</h2>
-				<p id="stats" class="muted">Total: 0</p>
-			</div>
-			<div class="table-wrap">
-				<table>
-					<thead>
-						<tr>
-							<th>Name</th>
-							<th>Icon</th>
-							<th>URL</th>
-							<th>Session Provider</th>
-							<th>Updated</th>
-							<th>Actions</th>
-						</tr>
-					</thead>
-					<tbody id="provider-rows"></tbody>
-				</table>
-			</div>
-		</section>
+				<section class="panel" aria-label="Provider list">
+					<div class="panel-head">
+						<h2>Providers</h2>
+						<p id="stats" class="muted">Total: 0</p>
+					</div>
+					<div class="table-wrap">
+						<table>
+							<thead>
+								<tr>
+									<th>Name</th>
+									<th>Icon</th>
+									<th>URL</th>
+									<th>Session Provider</th>
+									<th>Updated</th>
+									<th>Actions</th>
+								</tr>
+							</thead>
+							<tbody id="provider-rows"></tbody>
+						</table>
+					</div>
+				</section>
 
-		<div id="toast" role="status" aria-live="polite"></div>
-	</main>
+				<div id="toast" role="status" aria-live="polite"></div>
+			</main>
+		</div>
+	</div>
 </body>
 
 </html>

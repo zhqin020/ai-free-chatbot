@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 import time
 from typing import Any
@@ -28,79 +29,46 @@ def _compact_result(payload: Any) -> Any:
     }
 
 
-def _has_provider_session(client: ApiClient, provider_hint: str) -> bool:
-    rows = client.get("/api/sessions", params={"enabled_only": True})
-    for row in rows:
-        if row.get("provider") != provider_hint:
-            continue
-        return True
-    return False
-
-
-def _detect_login_required(client: ApiClient, task_id: str) -> str | None:
-    logs = client.get(
-        "/api/logs",
-        params={"task_id": task_id, "page": 1, "page_size": 5},
-    )
-    for item in logs.get("items", []):
-        event = (item.get("event") or "").lower()
-        message = item.get("message") or ""
-        lowered = message.lower()
-        if (
-            event == "session_login_required"
-            or "session not logged in" in lowered
-            or "human verification" in lowered
-            or "login required" in lowered
-        ):
-            return message
-    return None
-
-
-def _detect_provider_login_needed(client: ApiClient, provider_hint: str) -> bool:
-    rows = client.get("/api/sessions", params={"enabled_only": True})
-    for row in rows:
-        if row.get("provider") != provider_hint:
-            continue
-        if row.get("login_state") == "need_login":
-            return True
-    return False
-
-
-def _provider_session_snapshot(client: ApiClient, provider_hint: str) -> list[dict[str, Any]]:
-    rows = client.get("/api/sessions", params={"enabled_only": True})
-    snapshots: list[dict[str, Any]] = []
-    for row in rows:
-        if row.get("provider") != provider_hint:
-            continue
-        snapshots.append(
-            {
-                "id": row.get("id"),
-                "provider": row.get("provider"),
-                "state": row.get("state"),
-                "login_state": row.get("login_state"),
-            }
-        )
-    return snapshots
-
-
 # Real end-to-end flow:
 # 1) create task -> 2) worker executes real provider call -> 3) poll status -> 4) fetch task result
 #
 # Prerequisites:
 # - API server running (python -m src.api.main)
 # - Worker running (python scripts/run_worker.py)
-# - At least one OPENCHAT session exists and is logged in
 #
 # Optional env vars:
-# - E2E_PROVIDER (default: openchat)
 # - E2E_TIMEOUT_SECONDS (default: 300)
 # - E2E_POLL_INTERVAL_SECONDS (default: 2)
-def main() -> None:
-    client = ApiClient()
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Create one extraction task and poll result via /api/tasks.",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=int(os.getenv("E2E_TIMEOUT_SECONDS", "300")),
+        help="Polling timeout seconds",
+    )
+    parser.add_argument(
+        "--poll-interval-seconds",
+        type=int,
+        default=int(os.getenv("E2E_POLL_INTERVAL_SECONDS", "2")),
+        help="Polling interval seconds",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=os.getenv("API_BASE_URL", "http://127.0.0.1:8000"),
+        help="API base URL",
+    )
+    return parser.parse_args()
 
-    provider_hint = os.getenv("E2E_PROVIDER", "openchat")
-    timeout_seconds = int(os.getenv("E2E_TIMEOUT_SECONDS", "300"))
-    poll_interval_seconds = int(os.getenv("E2E_POLL_INTERVAL_SECONDS", "2"))
+
+def main() -> None:
+    args = _parse_args()
+    client = ApiClient(base_url=args.base_url)
+
+    timeout_seconds = args.timeout_seconds
+    poll_interval_seconds = args.poll_interval_seconds
 
     prompt = "Extract legal status, judgment result, and key timeline nodes as JSON."
     document_text = '''
@@ -198,19 +166,12 @@ def main() -> None:
     '''
 
     try:
-        if not _has_provider_session(client, provider_hint):
-            raise RuntimeError(
-                "no enabled session found for provider "
-                f"{provider_hint}; create one in /admin/sessions first"
-            )
-
         created = client.post(
             "/api/tasks",
             json={
                 "external_id": f"e2e-openchat-{int(time.time())}",
                 "prompt": prompt,
                 "document_text": document_text,
-                "provider_hint": provider_hint,
             },
         )
         task_id = created["id"]
@@ -222,26 +183,11 @@ def main() -> None:
             row = client.get(f"/api/tasks/{task_id}")
             pretty_print("task status", {"id": row["id"], "status": row["status"], "latest_trace_id": row.get("latest_trace_id")})
 
-            login_required_message = _detect_login_required(client, task_id)
-            if login_required_message:
-                snapshots = _provider_session_snapshot(client, provider_hint)
-                raise RuntimeError(
-                    f"login required: {login_required_message}; session_snapshot={snapshots}"
-                )
-
-            if _detect_provider_login_needed(client, provider_hint):
-                snapshots = _provider_session_snapshot(client, provider_hint)
-                raise RuntimeError(
-                    "login required: worker opened browser and detected session not logged in; "
-                    "please complete login and click Mark Login OK in /admin/sessions; "
-                    f"session_snapshot={snapshots}"
-                )
-
             if row["status"] in terminal_statuses:
                 break
             if time.monotonic() >= deadline:
                 raise TimeoutError(
-                    f"task not finished in {timeout_seconds}s; check worker and openchat session login state"
+                    f"task not finished in {timeout_seconds}s; check worker/server logs for details"
                 )
             time.sleep(poll_interval_seconds)
 
