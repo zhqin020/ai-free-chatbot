@@ -82,6 +82,18 @@ class SessionRepository:
             session.delete(row)
             return True
 
+    def disable(self, session_id: str, *, login_state: str = "invalid_session") -> bool:
+        with session_scope() as session:
+            row = session.get(SessionORM, session_id)
+            if row is None:
+                return False
+            row.enabled = False
+            row.state = SessionState.WAIT_LOGIN
+            row.login_state = login_state
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return True
+
     def list_by_provider(self, provider: Provider) -> list[SessionORM]:
         with session_scope() as session:
             rows = session.execute(
@@ -494,6 +506,13 @@ class AttemptRepository:
                 select(func.count(TaskAttemptORM.id)).where(TaskAttemptORM.task_id == task_id)
             ).scalar_one()
             return int(count)
+
+    def has_session_attempts(self, session_id: str) -> bool:
+        with session_scope() as session:
+            count = session.execute(
+                select(func.count(TaskAttemptORM.id)).where(TaskAttemptORM.session_id == session_id)
+            ).scalar_one()
+            return int(count) > 0
 
 
 class LogRepository:

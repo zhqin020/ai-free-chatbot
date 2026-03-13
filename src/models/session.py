@@ -91,3 +91,16 @@ class SessionStatsRead(BaseModel):
     implemented: bool
     interaction_count: int | None = None
     message: str
+
+
+class SessionVerifyRead(BaseModel):
+    session_id: str
+    valid: bool
+    deleted: bool = False
+    reason: str
+    stored_http_session_id: str | None = None
+    current_http_session_id: str | None = None
+    tracked: bool = False
+    cookie_name: str | None = None
+    composed_session_id: str | None = None
+    updated_at: datetime | None = None

@@ -59,6 +59,42 @@ class BrowserSessionPool:
         safe = f"{provider}_{session_id}".replace(":", "_")
         return self.profile_dir / safe
 
+    @staticmethod
+    def _pick_session_cookie(cookies: list[dict]) -> tuple[str, str] | None:
+        candidate_names = {
+            "sessionid",
+            "session",
+            "sid",
+            "jsessionid",
+            "phpsessid",
+            "connect.sid",
+            "_session",
+        }
+        for cookie in cookies:
+            if not isinstance(cookie, dict):
+                continue
+            name = str(cookie.get("name") or "").strip()
+            value = str(cookie.get("value") or "").strip()
+            if not name or not value:
+                continue
+            lowered = name.lower()
+            if lowered in candidate_names or "sess" in lowered:
+                return name, value
+        return None
+
+    async def probe_runtime_session_cookie(self, session_id: str, provider: str = "openchat") -> tuple[str, str] | None:
+        """Read current session cookie directly from live browser context if available."""
+        key = self._make_key(provider, session_id)
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        try:
+            cookies = await entry.controller.context.cookies()
+        except Exception as exc:
+            logger.warning("pool.probe_runtime_cookie failed key=%s error=%s", key, exc)
+            return None
+        return self._pick_session_cookie(cookies)
+
     async def get_page(self, session_id: str, url: str, provider: str = "openchat") -> Page:
         key = self._make_key(provider, session_id)
         logger.debug(

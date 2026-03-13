@@ -21,7 +21,7 @@ const api = {
 	},
 
 	listSessions() {
-		return this.request("/api/sessions");
+		return this.request("/api/sessions?enabled_only=true");
 	},
 
 	discoverSessions() {
@@ -46,6 +46,10 @@ const api = {
 
 	probeHttpSession(id) {
 		return this.request(`/api/sessions/${encodeURIComponent(id)}/http-session`);
+	},
+
+	verifySession(id) {
+		return this.request(`/api/sessions/${encodeURIComponent(id)}/verify`, { method: "POST" });
 	},
 
 	listErrors() {
@@ -238,11 +242,16 @@ async function handleRowAction(event) {
 	}
 
 	if (action === "probe") {
-		const result = await api.probeHttpSession(id);
+		const result = await api.verifySession(id);
+		if (result?.deleted) {
+			showToast(`会话已删除: ${id}`);
+			await reloadSessions();
+			return;
+		}
 		if (result?.tracked && result?.composed_session_id) {
-			showToast(`已跟踪: ${result.composed_session_id}`);
+			showToast(`会话有效（浏览器实时 cookie 一致）: ${result.composed_session_id}`);
 		} else {
-			showToast("未跟踪到内部 HTTP session，请先通过程序内部浏览器打开并完成页面交互");
+			showToast(result?.reason || "无法从浏览器读取实时 cookie，请人工确认登录状态");
 		}
 	}
 

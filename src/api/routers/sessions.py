@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from datetime import UTC, datetime
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.api.browser_open_service import open_page_in_server_browser
+from src.api.browser_open_service import ensure_runtime_cookie_in_server_browser, open_page_in_server_browser
 from src.models.session import (
     Provider,
     SessionConfig,
@@ -19,6 +17,7 @@ from src.models.session import (
     SessionStatsRead,
     SessionState,
     SessionUpdate,
+    SessionVerifyRead,
 )
 from src.storage.database import SessionORM
 from src.storage.repositories import ProviderConfigRepository, SessionRepository, SessionTrackingRepository
@@ -34,14 +33,8 @@ def _to_session_read(row: SessionORM) -> SessionRead:
     ordinal = ordinal_match.group(1) if ordinal_match else "1"
     session_name = f"{row.provider.value}-{ordinal}"
 
-    tracked = _extract_http_session_cookie(_state_file(row.provider.value, row.id))
-    probed_http_session_id: str | None = None
-    if tracked is not None:
-        _, cookie_value = tracked
-        probed_http_session_id = hashlib.sha256(cookie_value.encode("utf-8")).hexdigest()[:12]
-
     tracking = tracking_repo.get(row.id)
-    http_session_id = tracking.http_session_id if tracking is not None else probed_http_session_id
+    http_session_id = tracking.http_session_id if tracking is not None else None
     if tracking is None:
         tracking_repo.upsert(
             session_id=row.id,
@@ -86,53 +79,18 @@ def _map_provider_name_to_session_provider(name: str) -> Provider | None:
         return None
 
 
-def _state_file(provider: str, session_id: str) -> Path:
-    safe = f"{provider}_{session_id}".replace(":", "_")
-    return Path("tmp/browser_state") / f"{safe}.json"
-
-
-def _extract_http_session_cookie(state_file: Path) -> tuple[str, str] | None:
-    if not state_file.exists():
-        return None
-    try:
-        payload = json.loads(state_file.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-    cookies = payload.get("cookies") or []
-    if not isinstance(cookies, list):
-        return None
-
-    candidate_names = (
-        "sessionid",
-        "session",
-        "sid",
-        "jsessionid",
-        "phpsessid",
-        "connect.sid",
-        "_session",
+async def _probe_current_http_session_id(row: SessionORM) -> tuple[str | None, str | None, str | None]:
+    extracted = await ensure_runtime_cookie_in_server_browser(
+        key=row.id,
+        url=row.chat_url,
+        provider=row.provider.value,
     )
-
-    for cookie in cookies:
-        if not isinstance(cookie, dict):
-            continue
-        name = str(cookie.get("name") or "").strip()
-        value = str(cookie.get("value") or "").strip()
-        if not name or not value:
-            continue
-        lowered = name.lower()
-        if lowered in candidate_names or "sess" in lowered:
-            return name, value
-    return None
-
-
-def _probe_current_http_session_id(row: SessionORM) -> tuple[str | None, str | None]:
-    extracted = _extract_http_session_cookie(_state_file(row.provider.value, row.id))
+    source = "browser_context"
     if extracted is None:
-        return None, None
+        return None, None, None
     cookie_name, cookie_value = extracted
     digest = hashlib.sha256(cookie_value.encode("utf-8")).hexdigest()[:12]
-    return cookie_name, digest
+    return cookie_name, digest, source
 
 
 @router.post("", response_model=SessionRead, status_code=status.HTTP_201_CREATED)
@@ -160,7 +118,7 @@ def discover_sessions() -> list[SessionRead]:
             id=session_id,
             provider=mapped_provider,
             chat_url=provider_row.url,
-            enabled=existing.enabled if existing is not None else True,
+            enabled=True,
             priority=existing.priority if existing is not None else (100 + index),
         )
         row = session_repo.upsert(config)
@@ -238,7 +196,7 @@ async def open_session(session_id: str) -> SessionOpenRead:
 
     previous_tracking = tracking_repo.get(row.id)
     previous_http = previous_tracking.http_session_id if previous_tracking is not None else None
-    _, current_http = _probe_current_http_session_id(row)
+    _, current_http, _ = await _probe_current_http_session_id(row)
 
     requires_confirm = bool(previous_http and current_http and previous_http != current_http)
     warning = None
@@ -313,34 +271,101 @@ def rebuild_session(session_id: str) -> SessionRebuildRead:
 
 
 @router.get("/{session_id}/http-session", response_model=SessionHttpTrackingRead)
-def probe_http_session(session_id: str) -> SessionHttpTrackingRead:
+async def probe_http_session(session_id: str) -> SessionHttpTrackingRead:
     row = session_repo.get(session_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
 
-    state_file = _state_file(row.provider.value, row.id)
-    extracted = _extract_http_session_cookie(state_file)
-    if extracted is None:
+    cookie_name, digest, source = await _probe_current_http_session_id(row)
+    if digest is None:
         tracking_repo.update_http_session(row.id, None)
         return SessionHttpTrackingRead(
             session_id=row.id,
             tracked=False,
-            source="internal_browser_state",
+            source="browser_context",
             composed_session_id=None,
             updated_at=None,
         )
 
-    cookie_name, cookie_value = extracted
-    digest = hashlib.sha256(cookie_value.encode("utf-8")).hexdigest()[:12]
     composed = f"{row.id}#{digest}"
     tracking_repo.update_http_session(row.id, digest)
-    updated_at = datetime.fromtimestamp(state_file.stat().st_mtime, tz=UTC)
+    updated_at = datetime.now(UTC)
     return SessionHttpTrackingRead(
         session_id=row.id,
         tracked=True,
-        source="internal_browser_state",
+        source=source or "browser_context",
         cookie_name=cookie_name,
         composed_session_id=composed,
+        updated_at=updated_at,
+    )
+
+
+@router.post("/{session_id}/verify", response_model=SessionVerifyRead)
+async def verify_session(session_id: str) -> SessionVerifyRead:
+    row = session_repo.get(session_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
+    tracking = tracking_repo.get(session_id)
+    stored_http = tracking.http_session_id if tracking is not None else None
+    cookie_name, current_http, _ = await _probe_current_http_session_id(row)
+    updated_at = datetime.now(UTC)
+
+    # Rule 1: cannot probe current HTTP session -> report invalid, do not delete.
+    if current_http is None:
+        return SessionVerifyRead(
+            session_id=row.id,
+            valid=False,
+            deleted=False,
+            reason="unable to verify: no current HTTP session tracked",
+            stored_http_session_id=stored_http,
+            current_http_session_id=None,
+            tracked=False,
+            updated_at=updated_at,
+        )
+
+    # Rule 2: first successful tracking (no stored id yet) -> initialize and keep.
+    if stored_http is None:
+        tracking_repo.update_http_session(row.id, current_http)
+        return SessionVerifyRead(
+            session_id=row.id,
+            valid=True,
+            deleted=False,
+            reason="session valid: HTTP session initialized",
+            stored_http_session_id=None,
+            current_http_session_id=current_http,
+            tracked=True,
+            cookie_name=cookie_name,
+            composed_session_id=f"{row.id}#{current_http}",
+            updated_at=updated_at,
+        )
+
+    # Rule 3: mismatch means expired session, but keep record for manual recovery.
+    if stored_http != current_http:
+        session_repo.update_state(session_id, SessionState.WAIT_LOGIN, login_state="invalid_session")
+        tracking_repo.update_status(session_id, SessionState.WAIT_LOGIN.value)
+        return SessionVerifyRead(
+            session_id=row.id,
+            valid=False,
+            deleted=False,
+            reason="session expired: HTTP session changed",
+            stored_http_session_id=stored_http,
+            current_http_session_id=current_http,
+            tracked=False,
+            updated_at=updated_at,
+        )
+
+    # Rule 4: consistent id -> valid.
+    tracking_repo.update_http_session(row.id, current_http)
+    return SessionVerifyRead(
+        session_id=row.id,
+        valid=True,
+        deleted=False,
+        reason="session valid: HTTP session matches record",
+        stored_http_session_id=stored_http,
+        current_http_session_id=current_http,
+        tracked=True,
+        cookie_name=cookie_name,
+        composed_session_id=f"{row.id}#{current_http}",
         updated_at=updated_at,
     )
 
