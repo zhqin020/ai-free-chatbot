@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from src.config import reset_settings_cache
 from src.models.task import TaskCreate
 from src.storage.database import init_db
-from src.models.session import Provider, SessionConfig
+from src.models.session import Provider, SessionConfig, SessionState
 from src.storage.repositories import SessionRepository
 from src.storage.repositories import TaskRepository
 
@@ -39,6 +39,7 @@ def patch_server_open(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     runtime_cookies: dict[tuple[str, str], tuple[str, str]] = {}
     runtime_cookies_on_open: dict[tuple[str, str], tuple[str, str]] = {}
+    runtime_page_states: dict[tuple[str, str], dict[str, bool]] = {}
     stats = {"open_calls": 0}
 
     async def _fake_open_page_in_server_browser(*, key: str, url: str, provider: str) -> tuple[bool, str]:
@@ -71,9 +72,24 @@ def patch_server_open(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         "ensure_runtime_cookie_in_server_browser",
         _fake_ensure_runtime_cookie_in_server_browser,
     )
+    async def _fake_inspect_runtime_page_state_in_server_browser(
+        *,
+        key: str,
+        url: str,
+        provider: str,
+    ) -> dict[str, bool] | None:
+        _ = url
+        return runtime_page_states.get((key, provider))
+
+    monkeypatch.setattr(
+        sessions_router,
+        "inspect_runtime_page_state_in_server_browser",
+        _fake_inspect_runtime_page_state_in_server_browser,
+    )
     return {
         "cookies": runtime_cookies,
         "cookies_on_open": runtime_cookies_on_open,
+        "page_states": runtime_page_states,
         "stats": stats,
     }
 
@@ -300,13 +316,13 @@ def test_verify_session_deletes_when_http_session_changes(client: TestClient, pa
     body = verify_resp.json()
     assert body["valid"] is False
     assert body["deleted"] is False
-    assert "HTTP session changed" in body["reason"]
+    assert "session changed" in body["reason"]
 
     existing_resp = client.get("/api/sessions/s-deepseek-1")
     assert existing_resp.status_code == 200
 
 
-def test_verify_session_change_moves_state_to_wait_login(client: TestClient, patch_server_open: dict[str, object]) -> None:
+def test_verify_session_change_does_not_force_wait_login(client: TestClient, patch_server_open: dict[str, object]) -> None:
     discover_resp = client.post("/api/sessions/discover")
     assert discover_resp.status_code == 200
 
@@ -320,13 +336,99 @@ def test_verify_session_change_moves_state_to_wait_login(client: TestClient, pat
     cookies[("s-deepseek-1", "deepseek")] = ("sessionid", "state-b")
     changed_resp = client.post("/api/sessions/s-deepseek-1/verify")
     assert changed_resp.status_code == 200
-    assert changed_resp.json()["valid"] is False
+    body = changed_resp.json()
+    assert body["valid"] is False
+    assert "session changed" in body["reason"]
+
+    row_resp = client.get("/api/sessions/s-deepseek-1")
+    assert row_resp.status_code == 200
+    row = row_resp.json()
+    assert row["state"] == "READY"
+    assert row["login_state"] == "logged_in"
+
+
+def test_verify_valid_session_recovers_wait_login_to_ready(client: TestClient, patch_server_open: dict[str, object]) -> None:
+    discover_resp = client.post("/api/sessions/discover")
+    assert discover_resp.status_code == 200
+
+    repo = SessionRepository()
+    ok = repo.update_state("s-deepseek-1", state=SessionState.WAIT_LOGIN, login_state="need_login")
+    assert ok is True
+
+    cookies = patch_server_open["cookies"]
+    assert isinstance(cookies, dict)
+    cookies[("s-deepseek-1", "deepseek")] = ("sessionid", "recoverable-token")
+
+    verify_resp = client.post("/api/sessions/s-deepseek-1/verify")
+    assert verify_resp.status_code == 200
+    assert verify_resp.json()["valid"] is True
+
+    row_resp = client.get("/api/sessions/s-deepseek-1")
+    assert row_resp.status_code == 200
+    row = row_resp.json()
+    assert row["state"] == "READY"
+    assert row["login_state"] == "logged_in"
+
+
+def test_verify_marks_wait_login_when_page_state_requires_login(client: TestClient, patch_server_open: dict[str, object]) -> None:
+    discover_resp = client.post("/api/sessions/discover")
+    assert discover_resp.status_code == 200
+
+    page_states = patch_server_open["page_states"]
+    assert isinstance(page_states, dict)
+    page_states[("s-deepseek-1", "deepseek")] = {
+        "chat_ready": False,
+        "cookie_required": False,
+        "verification_required": False,
+        "login_required": True,
+    }
+
+    verify_resp = client.post("/api/sessions/s-deepseek-1/verify")
+    assert verify_resp.status_code == 200
+    body = verify_resp.json()
+    assert body["valid"] is False
+    assert "session not ready" in body["reason"]
 
     row_resp = client.get("/api/sessions/s-deepseek-1")
     assert row_resp.status_code == 200
     row = row_resp.json()
     assert row["state"] == "WAIT_LOGIN"
-    assert row["login_state"] == "invalid_session"
+    assert row["login_state"] == "need_login"
+
+
+def test_verify_refreshes_http_session_when_chat_ready(client: TestClient, patch_server_open: dict[str, object]) -> None:
+    discover_resp = client.post("/api/sessions/discover")
+    assert discover_resp.status_code == 200
+
+    cookies = patch_server_open["cookies"]
+    page_states = patch_server_open["page_states"]
+    assert isinstance(cookies, dict)
+    assert isinstance(page_states, dict)
+
+    page_states[("s-deepseek-1", "deepseek")] = {
+        "chat_ready": True,
+        "cookie_required": False,
+        "verification_required": False,
+        "login_required": False,
+    }
+
+    cookies[("s-deepseek-1", "deepseek")] = ("sessionid", "token-a")
+    first_verify = client.post("/api/sessions/s-deepseek-1/verify")
+    assert first_verify.status_code == 200
+    assert first_verify.json()["valid"] is True
+
+    cookies[("s-deepseek-1", "deepseek")] = ("sessionid", "token-b")
+    second_verify = client.post("/api/sessions/s-deepseek-1/verify")
+    assert second_verify.status_code == 200
+    body = second_verify.json()
+    assert body["valid"] is True
+    assert "HTTP session refreshed" in body["reason"]
+
+    row_resp = client.get("/api/sessions/s-deepseek-1")
+    assert row_resp.status_code == 200
+    row = row_resp.json()
+    assert row["state"] == "READY"
+    assert row["login_state"] == "logged_in"
 
 
 def test_verify_with_attempt_history_does_not_delete_session(client: TestClient) -> None:

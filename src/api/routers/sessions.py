@@ -6,7 +6,11 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.api.browser_open_service import ensure_runtime_cookie_in_server_browser, open_page_in_server_browser
+from src.api.browser_open_service import (
+    ensure_runtime_cookie_in_server_browser,
+    inspect_runtime_page_state_in_server_browser,
+    open_page_in_server_browser,
+)
 from src.models.session import (
     Provider,
     SessionConfig,
@@ -91,6 +95,16 @@ async def _probe_current_http_session_id(row: SessionORM) -> tuple[str | None, s
     cookie_name, cookie_value = extracted
     digest = hashlib.sha256(cookie_value.encode("utf-8")).hexdigest()[:12]
     return cookie_name, digest, source
+
+
+def _page_gate_reason(page_state: dict[str, bool]) -> str:
+    if page_state.get("cookie_required"):
+        return "cookie consent required"
+    if page_state.get("verification_required"):
+        return "human verification required"
+    if page_state.get("login_required"):
+        return "login required"
+    return "chat window is not ready"
 
 
 @router.post("", response_model=SessionRead, status_code=status.HTTP_201_CREATED)
@@ -308,10 +322,44 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
     tracking = tracking_repo.get(session_id)
     stored_http = tracking.http_session_id if tracking is not None else None
     cookie_name, current_http, _ = await _probe_current_http_session_id(row)
+    page_state = await inspect_runtime_page_state_in_server_browser(
+        key=row.id,
+        url=row.chat_url,
+        provider=row.provider.value,
+    )
     updated_at = datetime.now(UTC)
+
+    if page_state is not None and not page_state.get("chat_ready", False):
+        reason = _page_gate_reason(page_state)
+        session_repo.update_state(session_id, SessionState.WAIT_LOGIN, login_state="need_login")
+        tracking_repo.update_status(session_id, SessionState.WAIT_LOGIN.value)
+        return SessionVerifyRead(
+            session_id=row.id,
+            valid=False,
+            deleted=False,
+            reason=f"session not ready: {reason}",
+            stored_http_session_id=stored_http,
+            current_http_session_id=current_http,
+            tracked=False,
+            cookie_name=cookie_name,
+            updated_at=updated_at,
+        )
 
     # Rule 1: cannot probe current HTTP session -> report invalid, do not delete.
     if current_http is None:
+        if page_state is not None and page_state.get("chat_ready", False):
+            session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
+            tracking_repo.update_status(session_id, SessionState.READY.value)
+            return SessionVerifyRead(
+                session_id=row.id,
+                valid=True,
+                deleted=False,
+                reason="session valid: chat window ready (cookie unavailable)",
+                stored_http_session_id=stored_http,
+                current_http_session_id=None,
+                tracked=False,
+                updated_at=updated_at,
+            )
         return SessionVerifyRead(
             session_id=row.id,
             valid=False,
@@ -326,6 +374,8 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
     # Rule 2: first successful tracking (no stored id yet) -> initialize and keep.
     if stored_http is None:
         tracking_repo.update_http_session(row.id, current_http)
+        session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
+        tracking_repo.update_status(session_id, SessionState.READY.value)
         return SessionVerifyRead(
             session_id=row.id,
             valid=True,
@@ -339,15 +389,31 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
             updated_at=updated_at,
         )
 
-    # Rule 3: mismatch means expired session, but keep record for manual recovery.
+    # Rule 3: mismatch means HTTP session changed.
+    # Keep this endpoint non-destructive for operator workflows:
+    # return invalid signal but do not force state downgrade here.
     if stored_http != current_http:
-        session_repo.update_state(session_id, SessionState.WAIT_LOGIN, login_state="invalid_session")
-        tracking_repo.update_status(session_id, SessionState.WAIT_LOGIN.value)
+        if page_state is not None and page_state.get("chat_ready", False):
+            tracking_repo.update_http_session(row.id, current_http)
+            session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
+            tracking_repo.update_status(session_id, SessionState.READY.value)
+            return SessionVerifyRead(
+                session_id=row.id,
+                valid=True,
+                deleted=False,
+                reason="session valid: HTTP session refreshed from browser state",
+                stored_http_session_id=stored_http,
+                current_http_session_id=current_http,
+                tracked=True,
+                cookie_name=cookie_name,
+                composed_session_id=f"{row.id}#{current_http}",
+                updated_at=updated_at,
+            )
         return SessionVerifyRead(
             session_id=row.id,
             valid=False,
             deleted=False,
-            reason="session expired: HTTP session changed",
+            reason="session changed: HTTP session differs from tracked record",
             stored_http_session_id=stored_http,
             current_http_session_id=current_http,
             tracked=False,
@@ -356,6 +422,8 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
 
     # Rule 4: consistent id -> valid.
     tracking_repo.update_http_session(row.id, current_http)
+    session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
+    tracking_repo.update_status(session_id, SessionState.READY.value)
     return SessionVerifyRead(
         session_id=row.id,
         valid=True,

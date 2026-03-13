@@ -15,6 +15,7 @@ class TaskStatus(str, Enum):
     EXTRACTING = "EXTRACTING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    CRITICAL = "CRITICAL"
 
 
 class TaskCreate(BaseModel):

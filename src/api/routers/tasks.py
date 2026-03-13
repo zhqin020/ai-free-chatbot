@@ -4,15 +4,18 @@ from fastapi import APIRouter, HTTPException, status
 
 from src.models.result import TaskResult
 from src.models.task import TaskCreate, TaskPollRead, TaskRead
+from src.models.session import SessionState
 from src.parser import ResponseExtractor
 from src.storage.database import TaskORM
-from src.storage.repositories import AttemptRepository, LogRepository, TaskRepository
+from src.storage.repositories import AttemptRepository, LogRepository, SessionRepository, TaskRepository
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 task_repo = TaskRepository()
 log_repo = LogRepository()
 attempt_repo = AttemptRepository()
 response_extractor = ResponseExtractor()
+session_repo = SessionRepository()
+SessionState = SessionState
 
 
 def _to_task_read(row: TaskORM) -> TaskRead:
@@ -68,6 +71,17 @@ def _build_task_payload(row: TaskORM) -> TaskPollRead:
     )
 
 
+def _all_sessions_unhealthy_or_unavailable() -> bool:
+    session_repo = SessionRepository()
+    sessions = session_repo.list(enabled_only=True)
+    if not sessions:
+        return True
+    for s in sessions:
+        if s.state == SessionState.READY:
+            return False
+    return True
+
+
 @router.post("", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
 def create_task(payload: TaskCreate) -> TaskRead:
     row = task_repo.create(payload)
@@ -82,7 +96,11 @@ def get_task(task_id: str) -> TaskPollRead:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"task not found: {task_id}",
         )
-    return _build_task_payload(row)
+    payload = _build_task_payload(row)
+    # 动态判断所有 session 是否都 unhealthy 或无可用 provider
+    if _all_sessions_unhealthy_or_unavailable():
+        payload.status = "CRITICAL"
+    return payload
 
 
 @router.get("/{task_id}/result", response_model=TaskResult)

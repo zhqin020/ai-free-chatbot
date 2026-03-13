@@ -27,6 +27,18 @@ pip install -r requirements.txt
 
 playwright install chromium
 
+若在 WSL/Ubuntu 环境运行管理页面，建议安装 emoji 字体（避免 Provider Settings 的图标显示为方块）：
+
+sudo apt update
+sudo apt install -y fonts-noto-color-emoji fonts-noto-core fonts-symbola
+fc-cache -f -v
+
+安装后建议重启 WSL 图形会话：
+
+1. 关闭浏览器。
+2. 在 Windows PowerShell 执行 `wsl --shutdown`。
+3. 重新进入 WSL 并启动服务后，浏览器强制刷新页面（Ctrl+Shift+R）。
+
 3. 设置环境变量（开发环境示例）
 
 export APP_NAME=ai-free-chatbot
@@ -257,6 +269,7 @@ Cloudflare 反复验证建议：
 4. 页面打不开：确认 API 服务在 8000 端口启动，访问 /admin/sessions 或 /admin/test-extract。
 5. 任务创建立即失败并返回 503：通常是浏览器内核缺失。请执行 playwright install chromium。
 6. 浏览器反复出现 Verify you are human：系统会将会话置为 WAIT_LOGIN 并暂停调度。请在弹出的浏览器中完成 Cloudflare 验证/登录，然后到 /admin/sessions 点击 Mark Login OK。
+7. Provider Settings 图标显示为方块或空白：在 WSL 中安装 emoji 字体（`fonts-noto-color-emoji`、`fonts-noto-core`、`fonts-symbola`）并执行 `fc-cache -f -v`，然后重启 WSL 会话与浏览器。
 
 ## 文档
 

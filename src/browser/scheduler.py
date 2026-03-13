@@ -32,7 +32,7 @@ class WeightedRoundRobinScheduler:
         task_repo: TaskRepository | None = None,
         attempt_repo: AttemptRepository | None = None,
         dispatch_config_repo: TaskDispatchConfigRepository | None = None,
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 30,
     ) -> None:
         self.session_repo = session_repo or SessionRepository()
         self.task_repo = task_repo or TaskRepository()
@@ -103,7 +103,6 @@ class WeightedRoundRobinScheduler:
             latency_ms=latency_ms,
             error_message=error_message,
         )
-        self.task_repo.mark_status(task_id=task_id, status=TaskStatus.FAILED)
         lowered = error_message.lower()
         if (
             "session not logged in" in lowered
@@ -111,6 +110,7 @@ class WeightedRoundRobinScheduler:
             or "human verification" in lowered
             or "chat window is not ready" in lowered
         ):
+            self.task_repo.mark_status(task_id=task_id, status=TaskStatus.PENDING)
             self.session_repo.update_state(
                 session_id,
                 SessionState.WAIT_LOGIN,
@@ -130,12 +130,14 @@ class WeightedRoundRobinScheduler:
             or "err_internet_disconnected" in lowered
             or "timed out" in lowered
         ):
+            self.task_repo.mark_status(task_id=task_id, status=TaskStatus.PENDING)
             self.session_repo.update_state(
                 session_id,
                 SessionState.UNHEALTHY,
                 login_state="runtime_error",
             )
         else:
+            self.task_repo.mark_status(task_id=task_id, status=TaskStatus.FAILED)
             self.session_repo.update_state(session_id, SessionState.READY)
 
     def _pick_next_ready_session(self) -> Optional[SessionORM]:

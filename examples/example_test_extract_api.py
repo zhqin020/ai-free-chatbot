@@ -117,15 +117,50 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _check_sessions_ready(client: ApiClient) -> bool:
+    sessions = client.get("/api/sessions", params={"enabled_only": True})
+    provider_ready = {"openchat": False, "deepseek": False}
+    for row in sessions:
+        if row.get("provider") in provider_ready and row.get("state") == "READY":
+            provider_ready[row["provider"]] = True
+    if all(provider_ready.values()):
+        print("[INFO] openchat 和 deepseek 会话均为 READY，开始测试。")
+        return True
+    print("[WARN] openchat/deepseek 会话未全部 READY，当前状态：")
+    for row in sessions:
+        print(f"  id={row.get('id')} provider={row.get('provider')} state={row.get('state')} login_state={row.get('login_state')}")
+    return False
+
+
 def main() -> None:
     args = _parse_args()
     client = ApiClient(base_url=args.base_url)
 
-    timeout_seconds = args.timeout_seconds
-    poll_interval_seconds = args.poll_interval_seconds
+    if not _check_sessions_ready(client):
+        print("[ABORT] 会话未全部 READY，终止测试。")
+        return
 
-    prompt = "Extract legal status, judgment result, and key timeline nodes as JSON."
-    document_text = '''
+    # 连续多次请求
+    N = 5
+    results = []
+    ret_json = '''{
+  "case_id": "string",
+  "case_status": "Closed|On-Going",
+  "judgment_result": "leave|grant|dismiss",
+  "hearing": "true|false",
+  "timeline": {
+    "filing_date": "YYYY-MM-DD",
+    "Applicant_file_completed": "YYYY-MM-DD",
+	"reply_memo": "YYYY-MM-DD",
+	"Sent_to_Court": "YYYY-MM-DD",
+    "judgment_date": "YYYY-MM-DD"
+  }
+}'''
+    for i in range(N):
+        print(f"\n===== Run {i+1} =====")
+        prompt = f"Extract legal status, judgment result, and key timeline nodes as JSON. the JSON should have the format {ret_json}, and the json is only result of the response no any other additional information. If any of the fields cannot be extracted, please set it to null or empty."
+        
+        document_text = '''
 {
   "case_id": "IMM-1-24",
   "case_number": "IMM-1-24",
@@ -159,54 +194,7 @@ def main() -> None:
       "entry_office": "Ottawa",
       "summary": "(Final decision) Order rendered by The Honourable Mr. Justice Pentney at Ottawa on 08-MAY-2024 dismissing the application for leave Decision filed on 08-MAY-2024 Considered by the Court without personal appearance entered in J. & O. Book, volume 1181 page(s) 48 - 50 Copy of the order sent to all parties Transmittal Letters placed on file."
     },
-    {
-      "id": null,
-      "case_id": "IMM-1-24",
-      "doc_id": 3,
-      "entry_date": "2024-05-06",
-      "entry_office": "Ottawa",
-      "summary": "Communication to the Court from the Registry dated 06-MAY-2024 re: No Applicant's Record on file - Sent to Court"
-    },
-    {
-      "id": null,
-      "case_id": "IMM-1-24",
-      "doc_id": 4,
-      "entry_date": "2024-01-10",
-      "entry_office": "Ottawa",
-      "summary": "Letter advising that no decision has yet been made on the Applicant's temporary resident visa. As such, no reasons for decision exist. sent by Embassy of Canada, Beijing on 09-JAN-2024 pursuant to Rule 9(2) Received on 10-JAN-2024"
-    },
-    {
-      "id": null,
-      "case_id": "IMM-1-24",
-      "doc_id": 5,
-      "entry_date": "2024-01-04",
-      "entry_office": "Vancouver",
-      "summary": "Notice of appearance on behalf of the respondent filed on 04-JAN-2024 with proof of service on the tribunal the applicant"
-    },
-    {
-      "id": null,
-      "case_id": "IMM-1-24",
-      "doc_id": 6,
-      "entry_date": "2024-01-03",
-      "entry_office": "St. John's",
-      "summary": "Letter from Applicant dated 03-JAN-2024 indicating they have not received a decision and as no reasons for decison exist, they are not seeking reasons. received on 03-JAN-2024"
-    },
-    {
-      "id": null,
-      "case_id": "IMM-1-24",
-      "doc_id": 7,
-      "entry_date": "2024-01-02",
-      "entry_office": "St. John's",
-      "summary": "Memorandum to file from St. John's, NL dated 02-JAN-2024 Registry requested Applicant provide letter stating they have not received a decison therefore they do not need to receive reasons, per Rule 72 exemption amendments placed on file."
-    },
-    {
-      "id": null,
-      "case_id": "IMM-1-24",
-      "doc_id": 8,
-      "entry_date": "2024-01-02",
-      "entry_office": "St. John's",
-      "summary": "Memorandum to file from St. John's, NL dated 02-JAN-2024 ALJR served, per Rule 133, upon DoJ Halifax by email Jan 2, 2024. Ack of receipt placed on file."
-    },
+
     {
       "id": null,
       "case_id": "IMM-1-24",
@@ -217,13 +205,11 @@ def main() -> None:
     }
   ]
 }
-    '''
-
-    try:
+        '''
         created = client.post(
             "/api/tasks",
             json={
-                "external_id": f"e2e-openchat-{int(time.time())}",
+                "external_id": f"e2e-openchat-{int(time.time())}-{i}",
                 "prompt": prompt,
                 "document_text": document_text,
             },
@@ -231,7 +217,9 @@ def main() -> None:
         task_id = created["id"]
         pretty_print("task created", created)
 
-        terminal_statuses = {"COMPLETED", "FAILED"}
+        timeout_seconds = args.timeout_seconds
+        poll_interval_seconds = args.poll_interval_seconds
+        terminal_statuses = {"COMPLETED", "FAILED", "CRITICAL"}
         deadline = time.monotonic() + timeout_seconds
         final_row: dict[str, Any] | None = None
         while True:
@@ -245,7 +233,10 @@ def main() -> None:
                     "error_message": row.get("error_message"),
                 },
             )
-
+            if row["status"] == "CRITICAL":
+                print("[CRITICAL] 服务端已不可用，终止轮询。请检查服务端健康状态。")
+                final_row = row
+                break
             if row["status"] in terminal_statuses:
                 final_row = row
                 break
@@ -256,11 +247,18 @@ def main() -> None:
                     f"task not finished in {timeout_seconds}s; check worker/server logs for details"
                 )
             time.sleep(poll_interval_seconds)
-
         if final_row is not None:
             pretty_print("task result (merged task payload)", _compact_result(final_row))
-    finally:
-        client.close()
+            results.append({
+                "run": i+1,
+                "provider": final_row.get("provider"),
+                "status": final_row.get("status"),
+                "error_message": final_row.get("error_message"),
+            })
+    print("\n===== 汇总结果 =====")
+    for r in results:
+        print(f"Run {r['run']}: provider={r['provider']} status={r['status']} error={r['error_message']}")
+    client.close()
 
 
 if __name__ == "__main__":

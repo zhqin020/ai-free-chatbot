@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import logging
 
+from src.browser.providers import DeepSeekAdapter, GeminiAdapter, GrokAdapter, OpenChatAdapter
 from src.browser.session_pool import BrowserSessionPool
 
 logger = logging.getLogger(__name__)
 
 # Use one shared browser pool so repeated open actions reuse browser/profile context.
 _open_pool = BrowserSessionPool(headless=False)
+
+
+def _resolve_adapter(provider: str):
+    if provider == "openchat":
+        return OpenChatAdapter()
+    if provider == "gemini":
+        return GeminiAdapter()
+    if provider == "grok":
+        return GrokAdapter()
+    if provider == "deepseek":
+        return DeepSeekAdapter()
+    return None
 
 
 async def open_page_in_server_browser(*, key: str, url: str, provider: str) -> tuple[bool, str]:
@@ -60,3 +73,38 @@ async def ensure_runtime_cookie_in_server_browser(
         return None
 
     return await probe_runtime_cookie_in_server_browser(key=key, provider=provider)
+
+
+async def inspect_runtime_page_state_in_server_browser(
+    *,
+    key: str,
+    url: str,
+    provider: str,
+) -> dict[str, bool] | None:
+    adapter = _resolve_adapter(provider)
+    if adapter is None:
+        return None
+
+    inspect_fn = getattr(adapter, "inspect_page_state", None)
+    if not callable(inspect_fn):
+        return None
+
+    try:
+        page = await _open_pool.get_page(session_id=key, url=url, provider=provider)
+        state = await inspect_fn(page)
+    except Exception as exc:
+        logger.warning(
+            "server browser inspect page state failed key=%s provider=%s url=%s error=%s",
+            key,
+            provider,
+            url,
+            exc,
+        )
+        return None
+
+    return {
+        "chat_ready": bool(getattr(state, "chat_ready", False)),
+        "cookie_required": bool(getattr(state, "cookie_required", False)),
+        "verification_required": bool(getattr(state, "verification_required", False)),
+        "login_required": bool(getattr(state, "login_required", False)),
+    }

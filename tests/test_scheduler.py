@@ -11,7 +11,7 @@ from src.storage.database import init_db
 from src.config import reset_settings_cache
 from src.storage.repositories import SessionRepository, TaskDispatchConfigRepository, TaskRepository
 from datetime import UTC, datetime, timedelta
-from src.storage.database import session_scope, SessionORM
+from src.storage.database import session_scope, SessionORM, TaskORM
 
 
 def _setup_test_db() -> None:
@@ -107,7 +107,7 @@ def test_scheduler_marks_wait_login_on_human_verification_error() -> None:
 
     updated_task = task_repo.get(task.id)
     assert updated_task is not None
-    assert updated_task.status == TaskStatus.FAILED
+    assert updated_task.status == TaskStatus.PENDING
 
     session_row = SessionRepository().get("s-openchat-verify")
     assert session_row is not None
@@ -151,7 +151,7 @@ def test_scheduler_marks_wait_login_on_chat_window_not_ready_error() -> None:
 
     updated_task = task_repo.get(task.id)
     assert updated_task is not None
-    assert updated_task.status == TaskStatus.FAILED
+    assert updated_task.status == TaskStatus.PENDING
 
     session_row = SessionRepository().get("s-openchat-not-ready")
     assert session_row is not None
@@ -178,7 +178,7 @@ def test_scheduler_does_not_dispatch_wait_login_session() -> None:
     SessionRepository().update_state("s-openchat-wait", state=SessionState.WAIT_LOGIN, login_state="need_login")
 
     task_repo = TaskRepository()
-    task_repo.create(
+    task = task_repo.create(
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
@@ -189,6 +189,94 @@ def test_scheduler_does_not_dispatch_wait_login_session() -> None:
     scheduler = WeightedRoundRobinScheduler(timeout_seconds=30)
     decision = scheduler.dispatch_next()
     assert decision is None
+
+    task_row = task_repo.get(task.id)
+    assert task_row is not None
+    assert task_row.status == TaskStatus.PENDING
+
+
+def test_scheduler_fails_pending_task_after_timeout_without_ready_session() -> None:
+    _setup_test_db()
+
+    registry = SessionRegistry()
+    registry.register(
+        SessionConfig(
+            id="s-openchat-wait-timeout",
+            provider=Provider.OPENCHAT,
+            chat_url="https://example.com/openchat",
+            enabled=True,
+            priority=10,
+        )
+    )
+    SessionRepository().update_state(
+        "s-openchat-wait-timeout",
+        state=SessionState.WAIT_LOGIN,
+        login_state="need_login",
+    )
+
+    task_repo = TaskRepository()
+    task = task_repo.create(
+        TaskCreate(
+            prompt="提取关键字段",
+            document_text="示例文书",
+            provider_hint=Provider.OPENCHAT,
+        )
+    )
+
+    with session_scope() as session:
+        row = session.get(TaskORM, task.id)
+        assert row is not None
+        row.updated_at = datetime.now(UTC) - timedelta(seconds=31)
+
+    scheduler = WeightedRoundRobinScheduler(timeout_seconds=30)
+    decision = scheduler.dispatch_next()
+    assert decision is None
+
+    task_row = task_repo.get(task.id)
+    assert task_row is not None
+    assert task_row.status == TaskStatus.FAILED
+
+
+def test_scheduler_keeps_pending_task_before_timeout_without_ready_session() -> None:
+    _setup_test_db()
+
+    registry = SessionRegistry()
+    registry.register(
+        SessionConfig(
+            id="s-openchat-wait-short",
+            provider=Provider.OPENCHAT,
+            chat_url="https://example.com/openchat",
+            enabled=True,
+            priority=10,
+        )
+    )
+    SessionRepository().update_state(
+        "s-openchat-wait-short",
+        state=SessionState.WAIT_LOGIN,
+        login_state="need_login",
+    )
+
+    task_repo = TaskRepository()
+    task = task_repo.create(
+        TaskCreate(
+            prompt="提取关键字段",
+            document_text="示例文书",
+            provider_hint=Provider.OPENCHAT,
+        )
+    )
+
+    with session_scope() as session:
+        row = session.get(TaskORM, task.id)
+        assert row is not None
+        row.updated_at = datetime.now(UTC) - timedelta(seconds=10)
+
+    scheduler = WeightedRoundRobinScheduler(timeout_seconds=30)
+    decision = scheduler.dispatch_next()
+    assert decision is None
+
+    task_row = task_repo.get(task.id)
+    assert task_row is not None
+    assert task_row.status == TaskStatus.PENDING
 
 
 def test_scheduler_marks_unhealthy_on_runtime_display_error() -> None:
@@ -227,7 +315,7 @@ def test_scheduler_marks_unhealthy_on_runtime_display_error() -> None:
 
     updated_task = task_repo.get(task.id)
     assert updated_task is not None
-    assert updated_task.status == TaskStatus.FAILED
+    assert updated_task.status == TaskStatus.PENDING
 
     session_row = SessionRepository().get("s-openchat-runtime")
     assert session_row is not None
@@ -271,7 +359,7 @@ def test_scheduler_marks_unhealthy_on_connection_refused_error() -> None:
 
     updated_task = task_repo.get(task.id)
     assert updated_task is not None
-    assert updated_task.status == TaskStatus.FAILED
+    assert updated_task.status == TaskStatus.PENDING
 
     session_row = SessionRepository().get("s-openchat-conn-refused")
     assert session_row is not None
@@ -354,6 +442,63 @@ def test_scheduler_stops_redispatch_after_failed_attempt() -> None:
 
     decision_second = scheduler.dispatch_next()
     assert decision_second is None
+
+
+def test_scheduler_requeues_after_wait_login_failure_and_falls_back_to_ready_session() -> None:
+    _setup_test_db()
+    TaskDispatchConfigRepository().set_mode("round_robin")
+
+    registry = SessionRegistry()
+    registry.register(
+        SessionConfig(
+            id="s-deepseek-1",
+            provider=Provider.DEEPSEEK,
+            chat_url="https://chat.deepseek.com/",
+            enabled=True,
+            priority=10,
+        )
+    )
+    registry.register(
+        SessionConfig(
+            id="s-openchat-1",
+            provider=Provider.OPENCHAT,
+            chat_url="http://127.0.0.1:8010/",
+            enabled=True,
+            priority=10,
+        )
+    )
+    registry.mark_ready("s-deepseek-1")
+    registry.mark_ready("s-openchat-1")
+
+    task_repo = TaskRepository()
+    task = task_repo.create(
+        TaskCreate(
+            prompt="提取关键字段",
+            document_text="示例文书",
+            provider_hint=None,
+        )
+    )
+
+    scheduler = WeightedRoundRobinScheduler(timeout_seconds=30)
+
+    first = scheduler.dispatch_next()
+    assert first is not None
+    assert first.provider == Provider.DEEPSEEK
+    scheduler.mark_attempt_failed(
+        task_id=first.task_id,
+        session_id=first.session_id,
+        attempt_id=first.attempt_id,
+        error_message="login required",
+    )
+
+    task_after_first = task_repo.get(task.id)
+    assert task_after_first is not None
+    assert task_after_first.status == TaskStatus.PENDING
+
+    second = scheduler.dispatch_next()
+    assert second is not None
+    assert second.task_id == task.id
+    assert second.provider == Provider.OPENCHAT
 
 
 def test_scheduler_round_robin_mode_ignores_priority() -> None:

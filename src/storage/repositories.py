@@ -195,6 +195,18 @@ class TaskRepository:
                 task.updated_at = datetime.now(UTC)
                 recovered.append(task.id)
 
+            pending = session.execute(
+                select(TaskORM).where(
+                    TaskORM.status == TaskStatus.PENDING,
+                    TaskORM.updated_at < threshold,
+                )
+            ).scalars().all()
+
+            for task in pending:
+                task.status = TaskStatus.FAILED
+                task.updated_at = datetime.now(UTC)
+                recovered.append(task.id)
+
             session.flush()
         return recovered
 
