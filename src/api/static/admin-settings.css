@@ -4,7 +4,7 @@
 
 body {
 	margin: 0;
-	font-family: "Noto Sans SC", "PingFang SC", sans-serif;
+	font-family: "Noto Sans SC", "PingFang SC", "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 	background: #f4f6f9;
 	color: #13213a;
 }
@@ -86,6 +86,35 @@ input {
 	border: 1px solid #cfd8e6;
 	border-radius: 8px;
 	padding: 10px;
+}
+
+.icon-picker {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.icon-chip {
+	width: 38px;
+	height: 38px;
+	padding: 0;
+	border: 1px solid #cfd8e6;
+	border-radius: 10px;
+	background: #fff;
+	cursor: pointer;
+	font-size: 20px;
+	font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", "Segoe UI Symbol", sans-serif;
+	line-height: 1;
+}
+
+#provider-icon,
+.icon-cell {
+	font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", "Segoe UI Symbol", sans-serif;
+}
+
+.icon-chip.active {
+	border-color: #2449d8;
+	box-shadow: 0 0 0 2px rgba(36, 73, 216, 0.2);
 }
 
 .span-3 {

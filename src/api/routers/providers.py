@@ -83,6 +83,12 @@ def update_provider(provider_name: str, payload: ProviderConfigUpdate) -> Provid
 
 @router.delete("/{provider_name}")
 def delete_provider(provider_name: str) -> dict[str, bool]:
+    if provider_name in provider_repo.DEFAULTS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"builtin provider cannot be deleted: {provider_name}",
+        )
+
     deleted = provider_repo.delete(provider_name)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"provider not found: {provider_name}")

@@ -111,3 +111,9 @@ def test_dispatch_mode_get_and_update(client: TestClient) -> None:
     get_after = client.get("/api/providers/dispatch-mode")
     assert get_after.status_code == 200
     assert get_after.json()["mode"] == "priority"
+
+
+def test_builtin_provider_cannot_be_deleted(client: TestClient) -> None:
+    resp = client.delete("/api/providers/deepseek")
+    assert resp.status_code == 403
+    assert "builtin provider cannot be deleted" in resp.json()["detail"]

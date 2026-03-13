@@ -80,6 +80,7 @@ const nodes = {
 	name: document.getElementById("provider-name"),
 	url: document.getElementById("provider-url"),
 	icon: document.getElementById("provider-icon"),
+	iconPicker: document.getElementById("provider-icon-picker"),
 	submit: document.getElementById("submit-btn"),
 	reset: document.getElementById("reset-btn"),
 	refresh: document.getElementById("refresh-btn"),
@@ -87,6 +88,14 @@ const nodes = {
 	rows: document.getElementById("provider-rows"),
 	toast: document.getElementById("toast"),
 };
+
+function setIconValue(icon) {
+	nodes.icon.value = icon;
+	const chips = nodes.iconPicker?.querySelectorAll("button[data-icon]") || [];
+	for (const chip of chips) {
+		chip.classList.toggle("active", chip.dataset.icon === icon);
+	}
+}
 
 function showToast(message) {
 	nodes.toast.textContent = message;
@@ -102,7 +111,7 @@ function resetForm() {
 	nodes.editingName.value = "";
 	nodes.name.value = "";
 	nodes.url.value = "";
-	nodes.icon.value = "";
+	setIconValue("🤖");
 	nodes.name.disabled = false;
 	nodes.formTitle.textContent = "Create Provider";
 	nodes.submit.textContent = "Create";
@@ -113,7 +122,7 @@ function fillForEdit(row) {
 	nodes.editingName.value = row.name;
 	nodes.name.value = row.name;
 	nodes.url.value = row.url;
-	nodes.icon.value = row.icon;
+	setIconValue(row.icon);
 	nodes.name.disabled = true;
 	nodes.formTitle.textContent = `Edit Provider: ${row.name}`;
 	nodes.submit.textContent = "Update";
@@ -124,6 +133,9 @@ function renderRows() {
 	const rows = [...state.providers].sort((a, b) => a.name.localeCompare(b.name));
 	for (const row of rows) {
 		const tr = document.createElement("tr");
+		const deleteAction = row.builtin
+			? ""
+			: `<button type="button" class="btn btn-danger" data-action="delete" data-name="${row.name}">Delete</button>`;
 		tr.innerHTML = `
       <td><strong>${row.name}</strong>${row.builtin ? " <span class=\"muted\">(builtin)</span>" : ""}</td>
       <td class="icon-cell">${row.icon}</td>
@@ -136,7 +148,7 @@ function renderRows() {
           <button type="button" class="btn btn-secondary" data-action="open" data-name="${row.name}">Open Browser</button>
           <button type="button" class="btn btn-secondary" data-action="view" data-name="${row.name}">View Session</button>
           <button type="button" class="btn btn-secondary" data-action="clear" data-name="${row.name}">Clear Session</button>
-          <button type="button" class="btn btn-danger" data-action="delete" data-name="${row.name}">Delete</button>
+					${deleteAction}
         </div>
       </td>
     `;
@@ -242,6 +254,11 @@ async function handleAction(event) {
 	}
 
 	if (action === "delete") {
+		if (row.builtin) {
+			showToast(`Builtin provider cannot be deleted: ${name}`);
+			return;
+		}
+
 		const ok = window.confirm(`Delete provider ${name}?`);
 		if (!ok) return;
 		await api.deleteProvider(name);
@@ -269,6 +286,12 @@ async function init() {
 
 	nodes.refresh.addEventListener("click", () => {
 		reload().then(() => showToast("Refreshed")).catch((err) => showToast(err.message));
+	});
+
+	nodes.iconPicker.addEventListener("click", (event) => {
+		const button = event.target.closest("button[data-icon]");
+		if (!button) return;
+		setIconValue(button.dataset.icon || "🤖");
 	});
 
 	nodes.rows.addEventListener("click", (event) => {

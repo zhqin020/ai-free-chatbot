@@ -72,7 +72,20 @@
 						</label>
 						<label>
 							Icon
-							<input id="provider-icon" required placeholder="🤖" />
+							<div id="provider-icon-picker" class="icon-picker" role="group"
+								aria-label="Provider icon picker">
+								<button type="button" class="icon-chip" data-icon="🤖" title="机器人">🤖</button>
+								<button type="button" class="icon-chip" data-icon="🧠" title="智能">🧠</button>
+								<button type="button" class="icon-chip" data-icon="✨" title="闪亮">✨</button>
+								<button type="button" class="icon-chip" data-icon="🛰️" title="卫星">🛰️</button>
+								<button type="button" class="icon-chip" data-icon="⚡" title="快速">⚡</button>
+								<button type="button" class="icon-chip" data-icon="💬" title="聊天">💬</button>
+								<button type="button" class="icon-chip" data-icon="🧪" title="测试">🧪</button>
+								<button type="button" class="icon-chip" data-icon="🔍" title="探索">🔍</button>
+								<button type="button" class="icon-chip" data-icon="🦾" title="自动化">🦾</button>
+								<button type="button" class="icon-chip" data-icon="🌐" title="网络">🌐</button>
+							</div>
+							<input id="provider-icon" required readonly placeholder="请选择图标" />
 						</label>
 						<div class="actions span-3">
 							<button id="submit-btn" type="submit" class="btn btn-primary">Create</button>
