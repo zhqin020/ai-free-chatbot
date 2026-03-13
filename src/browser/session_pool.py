@@ -143,7 +143,10 @@ class BrowserSessionPool:
             logger.debug("pool.close_entry saved storage state key=%s file=%s", key, state_file)
         except Exception as exc:
             logger.warning("pool.close_entry save state failed key=%s error=%s", key, exc)
-        await entry.controller.close()
+        try:
+            await entry.controller.close()
+        except Exception as exc:
+            logger.warning("pool.close_entry controller close failed key=%s error=%s", key, exc)
         logger.info("pool.close_entry completed key=%s", key)
 
 

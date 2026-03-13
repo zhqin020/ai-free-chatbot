@@ -29,6 +29,19 @@ def client() -> Iterator[TestClient]:
         yield test_client
 
 
+@pytest.fixture(autouse=True)
+def patch_server_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.api.routers import sessions as sessions_router
+
+    async def _fake_open_page_in_server_browser(*, key: str, url: str, provider: str) -> tuple[bool, str]:
+        _ = key
+        _ = url
+        _ = provider
+        return True, "opened in server browser"
+
+    monkeypatch.setattr(sessions_router, "open_page_in_server_browser", _fake_open_page_in_server_browser)
+
+
 def test_manual_session_crud_is_disabled(client: TestClient) -> None:
     create_resp = client.post(
         "/api/sessions",
@@ -78,6 +91,30 @@ def test_session_actions(client: TestClient) -> None:
     assert notify_resp.status_code == 200
     assert notify_resp.json()["state"] == "READY"
     assert notify_resp.json()["login_state"] == "logged_in"
+
+
+def test_open_session_auto_marks_ready(client: TestClient) -> None:
+    discover_resp = client.post("/api/sessions/discover")
+    assert discover_resp.status_code == 200
+
+    # Simulate sticky unhealthy state before manual open.
+    set_unhealthy_resp = client.post("/api/sessions/s-mock_openai-1/mark-login-ok")
+    assert set_unhealthy_resp.status_code == 200
+
+    from src.storage.repositories import SessionRepository
+    from src.models.session import SessionState
+
+    repo = SessionRepository()
+    ok = repo.update_state("s-mock_openai-1", SessionState.UNHEALTHY, login_state="runtime_error")
+    assert ok is True
+
+    open_resp = client.post("/api/sessions/s-mock_openai-1/open")
+    assert open_resp.status_code == 200
+
+    session_resp = client.get("/api/sessions/s-mock_openai-1")
+    assert session_resp.status_code == 200
+    assert session_resp.json()["state"] == "READY"
+    assert session_resp.json()["login_state"] == "logged_in"
 
 
 def test_session_discovery_and_ready_update(client: TestClient) -> None:

@@ -52,6 +52,17 @@ const api = {
 	getSessionTarget(name) {
 		return this.request(`/api/providers/${encodeURIComponent(name)}/session-target`);
 	},
+
+	getDispatchMode() {
+		return this.request("/api/providers/dispatch-mode");
+	},
+
+	updateDispatchMode(payload) {
+		return this.request("/api/providers/dispatch-mode", {
+			method: "PUT",
+			body: JSON.stringify(payload),
+		});
+	},
 };
 
 const state = {
@@ -62,6 +73,8 @@ const state = {
 
 const nodes = {
 	form: document.getElementById("provider-form"),
+	dispatchForm: document.getElementById("dispatch-form"),
+	dispatchMode: document.getElementById("dispatch-mode"),
 	formTitle: document.getElementById("form-title"),
 	editingName: document.getElementById("editing-name"),
 	name: document.getElementById("provider-name"),
@@ -145,6 +158,20 @@ function readPayload() {
 	};
 }
 
+async function loadDispatchMode() {
+	const row = await api.getDispatchMode();
+	if (row?.mode) {
+		nodes.dispatchMode.value = row.mode;
+	}
+}
+
+async function handleDispatchSubmit(event) {
+	event.preventDefault();
+	const mode = nodes.dispatchMode.value;
+	await api.updateDispatchMode({ mode });
+	showToast(`任务分配方式已更新: ${mode === "round_robin" ? "循环" : "按优先级"}`);
+}
+
 async function handleSubmit(event) {
 	event.preventDefault();
 	const payload = readPayload();
@@ -192,10 +219,11 @@ async function handleAction(event) {
 
 	if (action === "open") {
 		const result = await api.openBrowser(name);
-		if (result?.url) {
-			window.open(result.url, "_blank", "noopener,noreferrer");
+		if (result?.opened_in_server) {
+			showToast(result.open_message || `已在服务器浏览器打开: ${name}`);
+		} else {
+			showToast(result?.open_message || `服务器浏览器打开失败: ${name}`);
 		}
-		showToast(`Opened: ${name}`);
 		return;
 	}
 
@@ -230,6 +258,10 @@ async function init() {
 		handleSubmit(event).catch((err) => showToast(err.message));
 	});
 
+	nodes.dispatchForm.addEventListener("submit", (event) => {
+		handleDispatchSubmit(event).catch((err) => showToast(err.message));
+	});
+
 	nodes.reset.addEventListener("click", () => {
 		resetForm();
 		showToast("Form reset");
@@ -244,6 +276,7 @@ async function init() {
 	});
 
 	resetForm();
+	await loadDispatchMode();
 	await reload();
 }
 

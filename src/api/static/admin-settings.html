@@ -31,9 +31,27 @@
 					<div>
 						<p class="eyebrow">SETTINGS</p>
 						<h1>Provider Settings Console</h1>
-						<p class="lead">管理 provider（增删改）、打开浏览器、清空 session、查看 session。</p>
+						<p class="lead">管理 provider（增删改）、打开浏览器、清空 session、查看 session，以及任务分配方式。</p>
 					</div>
 				</header>
+
+				<section class="panel" aria-label="Dispatch mode">
+					<div class="panel-head">
+						<h2>Task Dispatch Mode</h2>
+					</div>
+					<form id="dispatch-form" class="form-grid">
+						<label>
+							任务分配方式
+							<select id="dispatch-mode" required>
+								<option value="round_robin">循环</option>
+								<option value="priority">按优先级</option>
+							</select>
+						</label>
+						<div class="actions span-3">
+							<button id="dispatch-submit" type="submit" class="btn btn-primary">保存分配方式</button>
+						</div>
+					</form>
+				</section>
 
 				<section class="panel" aria-label="Provider form">
 					<div class="panel-head">

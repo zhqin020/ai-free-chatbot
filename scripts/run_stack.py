@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -236,6 +237,79 @@ def _wait_mock_health(host: str, port: int, timeout_seconds: int, poll_interval_
     raise RuntimeError(f"mock_openchat health check timeout after {timeout_seconds}s: {url}")
 
 
+def _open_admin_in_wsl_browser(host: str, port: int, admin_path: str) -> None:
+    connect_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    normalized_path = admin_path if admin_path.startswith("/") else f"/{admin_path}"
+    target_url = f"http://{connect_host}:{port}{normalized_path}"
+
+    xdg_open = shutil.which("xdg-open")
+    if not xdg_open:
+        print(
+            "[stack-admin] skip opening admin browser: xdg-open not found; "
+            f"open manually: {target_url}"
+        )
+        return
+
+    try:
+        subprocess.Popen(
+            [xdg_open, target_url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"[stack-admin] opened in WSL browser: {target_url}")
+    except Exception as exc:
+        print(f"[stack-admin] failed to open admin browser: {exc}; url={target_url}")
+
+
+def _open_admin_in_wsl_browser_no_keyring(host: str, port: int, admin_path: str) -> None:
+    connect_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    normalized_path = admin_path if admin_path.startswith("/") else f"/{admin_path}"
+    target_url = f"http://{connect_host}:{port}{normalized_path}"
+
+    browser_bins = [
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+    ]
+
+    for browser_bin in browser_bins:
+        browser_path = shutil.which(browser_bin)
+        if not browser_path:
+            continue
+        cmd = [
+            browser_path,
+            "--password-store=basic",
+            "--new-window",
+            target_url,
+        ]
+        try:
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            print(
+                "[stack-admin] opened in WSL browser (no-keyring mode): "
+                f"browser={browser_bin} url={target_url}"
+            )
+            return
+        except Exception as exc:
+            print(
+                "[stack-admin] browser launch failed in no-keyring mode: "
+                f"browser={browser_bin} error={exc}"
+            )
+
+    print(
+        "[stack-admin] no Chromium-style browser found for no-keyring mode; "
+        "fallback to xdg-open"
+    )
+    _open_admin_in_wsl_browser(host=host, port=port, admin_path=admin_path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run API + worker as one coordinated backend stack")
     parser.add_argument("--host", default="0.0.0.0", help="API host")
@@ -273,6 +347,24 @@ def main() -> None:
     parser.add_argument("--mock-openchat-host", default="127.0.0.1", help="Mock openchat host")
     parser.add_argument("--mock-openchat-port", type=int, default=8010, help="Mock openchat port")
     parser.add_argument("--mock-openchat-reload", action="store_true", help="Enable mock_openchat reload mode")
+    parser.add_argument(
+        "--open-admin-browser",
+        action="store_true",
+        help="Open admin page in WSL-side browser after API health check",
+    )
+    parser.add_argument(
+        "--admin-path",
+        default="/admin",
+        help="Admin path to open when --open-admin-browser is enabled",
+    )
+    parser.add_argument(
+        "--open-admin-browser-no-keyring",
+        action="store_true",
+        help=(
+            "Open admin with Chromium-style browser using --password-store=basic "
+            "to avoid keyring unlock prompt"
+        ),
+    )
     args = parser.parse_args()
 
     reload_enabled = not args.no_reload
@@ -349,6 +441,16 @@ def main() -> None:
     except Exception:
         _terminate(api_proc, "api")
         raise
+
+    if args.open_admin_browser:
+        if args.open_admin_browser_no_keyring:
+            _open_admin_in_wsl_browser_no_keyring(
+                host=args.host,
+                port=args.port,
+                admin_path=args.admin_path,
+            )
+        else:
+            _open_admin_in_wsl_browser(host=args.host, port=args.port, admin_path=args.admin_path)
 
     worker_proc = subprocess.Popen(worker_cmd, env=env)
 

@@ -9,6 +9,10 @@
 3. 管理页面：会话管理页与测试提取页。
 4. Worker 轮询处理与提取校验链路。
 
+推荐先阅读：
+
+1. 最简任务链路说明：[docs/task-state-machine.md](docs/task-state-machine.md)
+
 ## 快速开始
 
 1. 激活环境
@@ -58,6 +62,9 @@ python -m scripts.run_stack --health-poll-interval-seconds 1.0
 python -m scripts.run_stack --skip-checks
 python -m scripts.run_stack --with-mock-openchat
 python -m scripts.run_stack --with-mock-openchat --mock-openchat-port 8010
+python -m scripts.run_stack --open-admin-browser
+python -m scripts.run_stack --open-admin-browser --admin-path /admin/sessions
+python -m scripts.run_stack --open-admin-browser --open-admin-browser-no-keyring
 
 说明：
 
@@ -67,6 +74,11 @@ python -m scripts.run_stack --with-mock-openchat --mock-openchat-port 8010
 4. `--with-mock-openchat` 启用时，run_stack 会先检查 mock_openchat 是否已运行：
 	1. 若已运行：记录运行状态和 PID，不重复启动。
 	2. 若未运行：自动启动并等待健康检查通过。
+5. `--open-admin-browser` 启用后，run_stack 会在 API 健康检查通过后，使用 WSL 环境的 `xdg-open` 打开管理页面（默认 `/admin`）。
+6. `--open-admin-browser-no-keyring` 可与 `--open-admin-browser` 搭配使用：
+	1. 优先尝试使用 Chromium 类浏览器并附加 `--password-store=basic`。
+	2. 用于规避 `Unlock Keyring` 弹窗。
+	3. 若未检测到 Chromium 类浏览器，会自动回退到 `xdg-open`。
 
 6. 如需单独启动（调试排障时使用）
 

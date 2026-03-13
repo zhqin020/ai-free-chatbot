@@ -66,6 +66,9 @@ def test_get_task_by_id(client: TestClient) -> None:
     body = get_response.json()
     assert body["id"] == task_id
     assert body["latest_trace_id"] is None
+    assert body["raw_response"] is None
+    assert body["extracted_json"] is None
+    assert body["error_message"] is None
 
 
 def test_get_task_not_found(client: TestClient) -> None:
@@ -73,15 +76,7 @@ def test_get_task_not_found(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_create_task_rejected_when_runtime_unavailable(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.api.routers import tasks as tasks_router
-
-    monkeypatch.setattr(
-        tasks_router,
-        "check_provider_runtime",
-        lambda _provider: (False, "runtime_unavailable: missing chromium"),
-    )
-
+def test_create_task_ignores_runtime_health_check(client: TestClient) -> None:
     response = client.post(
         "/api/tasks",
         json={
@@ -92,8 +87,8 @@ def test_create_task_rejected_when_runtime_unavailable(client: TestClient, monke
         },
     )
 
-    assert response.status_code == 503
-    assert "runtime_unavailable" in response.json()["detail"]
+    assert response.status_code == 201
+    assert response.json()["status"] == "PENDING"
 
 
 def test_get_task_result_without_raw_response(client: TestClient) -> None:
@@ -150,4 +145,32 @@ def test_get_task_result_with_parsed_raw_response(client: TestClient) -> None:
     assert body["raw_response"] is not None
     assert body["extracted_json"]["case_id"] == "IMM-3-24"
     assert body["extracted_json"]["case_status"] == "Closed"
+    assert body["error_message"] is None
+
+
+def test_get_task_by_id_includes_result_when_completed(client: TestClient) -> None:
+    create_response = client.post(
+        "/api/tasks",
+        json={
+            "prompt": "提取",
+            "document_text": "正文",
+            "provider_hint": "openchat",
+        },
+    )
+    task_id = create_response.json()["id"]
+
+    repo = TaskRepository()
+    repo.save_raw_response(
+        task_id=task_id,
+        provider=Provider.OPENCHAT,
+        response_text='{"ok":true,"case_id":"A-1"}',
+    )
+    repo.mark_status(task_id, TaskStatus.COMPLETED)
+
+    response = client.get(f"/api/tasks/{task_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["raw_response"] is not None
+    assert body["extracted_json"]["ok"] is True
     assert body["error_message"] is None

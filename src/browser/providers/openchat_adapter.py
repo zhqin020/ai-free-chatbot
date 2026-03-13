@@ -75,7 +75,9 @@ class OpenChatAdapter(ProviderAdapter):
         verification_required = await self._pick_visible_selector(page, self.verification_selectors) is not None
         login_required = await self._pick_visible_selector(page, self.login_hint_selectors) is not None
         input_selector = await self._pick_visible_selector(page, self.input_selectors)
-        chat_ready = bool(input_selector is not None and not login_required and not verification_required)
+        # Some providers render sign-in hints even when the active chat box is already usable.
+        # If chat input is visible and no hard gate is present, allow processing.
+        chat_ready = bool(input_selector is not None and not verification_required and not cookie_required)
 
         return OpenChatPageState(
             chat_ready=chat_ready,
@@ -111,14 +113,20 @@ class OpenChatAdapter(ProviderAdapter):
     ) -> Optional[str]:
         deadline = asyncio.get_event_loop().time() + timeout_ms / 1000.0
         previous = self.normalize_text(previous_response)
+        baseline_latest, baseline_count = await self._response_snapshot(page)
+        if not previous:
+            previous = baseline_latest
         candidate = ""
         stable_ticks = 0
 
         while asyncio.get_event_loop().time() < deadline:
-            latest = await self._latest_response(page)
+            latest, current_count = await self._response_snapshot(page)
             generating = await self._is_generating(page)
 
-            if latest and latest != previous:
+            # Consider either text change or message count growth as a new assistant response.
+            # This avoids false timeouts when providers return deterministic identical JSON.
+            has_new_response = bool(latest and (latest != previous or current_count > baseline_count))
+            if has_new_response:
                 if latest == candidate and not generating:
                     stable_ticks += 1
                 else:
@@ -134,19 +142,23 @@ class OpenChatAdapter(ProviderAdapter):
         return await self._latest_response(page)
 
     async def _latest_response(self, page: Any) -> str:
+        latest, _ = await self._response_snapshot(page)
+        return latest
+
+    async def _response_snapshot(self, page: Any) -> tuple[str, int]:
         selector = await self._pick_visible_selector(page, self.response_selectors)
         if selector is None:
-            return ""
+            return "", 0
 
         locator = page.locator(selector)
         try:
             text_items = await locator.all_inner_texts()
         except Exception:
-            return ""
+            return "", 0
 
         if not text_items:
-            return ""
-        return self.normalize_text(text_items[-1])
+            return "", 0
+        return self.normalize_text(text_items[-1]), len(text_items)
 
     async def _is_generating(self, page: Any) -> bool:
         if not self.generation_indicator_selectors:

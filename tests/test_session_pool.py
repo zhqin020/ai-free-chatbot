@@ -55,6 +55,12 @@ class FakeController:
             self.page.closed = True
 
 
+class FakeControllerCloseError(FakeController):
+    async def close(self) -> None:
+        await super().close()
+        raise RuntimeError("Target page, context or browser has been closed")
+
+
 @pytest.mark.asyncio
 async def test_session_pool_reuses_healthy_page() -> None:
     created: list[FakeController] = []
@@ -118,4 +124,24 @@ async def test_session_pool_warns_on_frequent_rebuilds(caplog: pytest.LogCapture
         _ = await pool.get_page("s1", "https://a.com")
 
     assert any("pool.rebuild.alert" in rec.message for rec in caplog.records)
+    await pool.close_all()
+
+
+@pytest.mark.asyncio
+async def test_session_pool_recreate_continues_when_close_raises() -> None:
+    created: list[FakeControllerCloseError] = []
+
+    def factory() -> FakeControllerCloseError:
+        c = FakeControllerCloseError()
+        created.append(c)
+        return c
+
+    pool = BrowserSessionPool(controller_factory=factory)
+    first_page = await pool.get_page("s1", "https://a.com")
+    created[0].healthy = False
+
+    # Should not raise even if closing old controller fails.
+    second_page = await pool.get_page("s1", "https://a.com")
+    assert first_page is not second_page
+    assert len(created) == 2
     await pool.close_all()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -30,5 +30,20 @@ class TaskRead(BaseModel):
     external_id: Optional[str] = None
     provider_hint: Optional[Provider] = None
     latest_trace_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskPollRead(BaseModel):
+    id: str
+    status: TaskStatus
+    external_id: Optional[str] = None
+    provider_hint: Optional[Provider] = None
+    latest_trace_id: Optional[str] = None
+    provider: Optional[Provider] = None
+    raw_response: Optional[str] = None
+    extracted_json: Optional[dict[str, Any]] = None
+    error_message: Optional[str] = None
+    retry_count: int = 0
     created_at: datetime
     updated_at: datetime

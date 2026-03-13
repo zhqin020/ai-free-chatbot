@@ -528,37 +528,20 @@ class SchedulerWorker:
 
     def _handle_extraction(self, task_id: str, raw_response: str, attempt_no: int, trace_id: str) -> bool:
         try:
-            payload = self.response_extractor.extract_json_candidate(raw_response)
+            _ = self.response_extractor.extract_json_candidate(raw_response)
         except Exception as exc:
             return self._on_extraction_failed(task_id, attempt_no, f"extract_error: {exc}", trace_id)
-
-        validated = self.json_validator.validate(payload)
-        if not validated.ok or validated.value is None:
-            return self._on_extraction_failed(
-                task_id,
-                attempt_no,
-                f"validate_error: {validated.error_message}",
-                trace_id,
-            )
-
-        fields = self.json_validator.to_storage_fields(validated.value)
         self.task_repo.save_extracted_result(
             task_id,
             valid_schema=True,
             extraction_error=None,
-            case_status=fields["case_status"],
-            judgment_result=fields["judgment_result"],
-            filing_date=fields["filing_date"],
-            judge_assignment_date=fields["judge_assignment_date"],
-            trial_date=fields["trial_date"],
-            judgment_date=fields["judgment_date"],
         )
         self.log_repo.add_log(
             trace_id=trace_id,
             level="INFO",
             task_id=task_id,
             event="extract_success",
-            message="schema validated",
+            message="json validated",
         )
         return True
 
@@ -576,24 +559,7 @@ class SchedulerWorker:
             message=error_message,
         )
 
-        if self.retry_handler.should_retry_parse(attempt_no):
-            task = self.task_repo.get(task_id)
-            if task is not None:
-                retry_prompt = self.prompt_generator.build_retry_prompt(
-                    previous_prompt=task.prompt_text,
-                    error_message=error_message,
-                )
-                self.task_repo.update_prompt(task_id, retry_prompt)
-            self.task_repo.mark_status(task_id=task_id, status=TaskStatus.PENDING)
-            self.log_repo.add_log(
-                trace_id=trace_id,
-                level="WARNING",
-                task_id=task_id,
-                event="extract_retry_scheduled",
-                message=f"attempt_no={attempt_no}",
-            )
-            return False
-
+        _ = attempt_no
         self.task_repo.mark_status(task_id=task_id, status=TaskStatus.FAILED)
         self.log_repo.add_log(
             trace_id=trace_id,

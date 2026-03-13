@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
+from src.api.browser_open_service import open_page_in_server_browser
 from src.models.provider import (
     ProviderClearSessionsResponse,
     ProviderConfigCreate,
@@ -9,14 +10,17 @@ from src.models.provider import (
     ProviderConfigUpdate,
     ProviderOpenResponse,
     ProviderSessionTargetResponse,
+    TaskDispatchConfigRead,
+    TaskDispatchConfigUpdate,
 )
 from src.models.session import Provider
 from src.storage.database import ProviderConfigORM
-from src.storage.repositories import ProviderConfigRepository, SessionRepository
+from src.storage.repositories import ProviderConfigRepository, SessionRepository, TaskDispatchConfigRepository
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 provider_repo = ProviderConfigRepository()
 session_repo = SessionRepository()
+dispatch_repo = TaskDispatchConfigRepository()
 
 
 def _map_session_provider(name: str) -> Provider | None:
@@ -47,6 +51,18 @@ def list_providers() -> list[ProviderConfigRead]:
     return [_to_read(row) for row in rows]
 
 
+@router.get("/dispatch-mode", response_model=TaskDispatchConfigRead)
+def get_dispatch_mode() -> TaskDispatchConfigRead:
+    row = dispatch_repo.get()
+    return TaskDispatchConfigRead(mode=row.mode, updated_at=row.updated_at)
+
+
+@router.put("/dispatch-mode", response_model=TaskDispatchConfigRead)
+def update_dispatch_mode(payload: TaskDispatchConfigUpdate) -> TaskDispatchConfigRead:
+    updated = dispatch_repo.set_mode(payload.mode.value)
+    return TaskDispatchConfigRead(mode=updated.mode, updated_at=updated.updated_at)
+
+
 @router.post("", response_model=ProviderConfigRead, status_code=status.HTTP_201_CREATED)
 def create_provider(payload: ProviderConfigCreate) -> ProviderConfigRead:
     row = provider_repo.get(payload.name)
@@ -74,11 +90,31 @@ def delete_provider(provider_name: str) -> dict[str, bool]:
 
 
 @router.post("/{provider_name}/open-browser", response_model=ProviderOpenResponse)
-def open_provider(provider_name: str) -> ProviderOpenResponse:
+async def open_provider(provider_name: str) -> ProviderOpenResponse:
     row = provider_repo.get(provider_name)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"provider not found: {provider_name}")
-    return ProviderOpenResponse(name=row.name, url=row.url)
+
+    mapped = _map_session_provider(row.name)
+    if mapped is not None:
+        # Reuse the same profile namespace as session/worker to preserve login state.
+        browser_key = f"s-{row.name}-1"
+        browser_provider = mapped.value
+    else:
+        browser_key = f"provider-{row.name}"
+        browser_provider = row.name
+
+    opened, message = await open_page_in_server_browser(
+        key=browser_key,
+        url=row.url,
+        provider=browser_provider,
+    )
+    return ProviderOpenResponse(
+        name=row.name,
+        url=row.url,
+        opened_in_server=opened,
+        open_message=message,
+    )
 
 
 @router.post("/{provider_name}/clear-sessions", response_model=ProviderClearSessionsResponse)

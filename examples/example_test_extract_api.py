@@ -29,6 +29,60 @@ def _compact_result(payload: Any) -> Any:
     }
 
 
+def _collect_pending_diagnostics(client: ApiClient, task_id: str) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {"task_id": task_id}
+
+    try:
+        worker = client.get("/api/worker/status")
+        diagnostics["worker"] = {
+            "running": worker.get("running"),
+            "pid": worker.get("pid"),
+            "message": worker.get("message"),
+        }
+    except Exception as exc:
+        diagnostics["worker_error"] = str(exc)
+
+    try:
+        sessions = client.get("/api/sessions", params={"enabled_only": True})
+        ready_count = sum(1 for row in sessions if row.get("state") == "READY")
+        diagnostics["sessions"] = {
+            "enabled_total": len(sessions),
+            "ready_total": ready_count,
+            "states": [
+                {
+                    "id": row.get("id"),
+                    "provider": row.get("provider"),
+                    "state": row.get("state"),
+                    "login_state": row.get("login_state"),
+                }
+                for row in sessions
+            ],
+        }
+    except Exception as exc:
+        diagnostics["sessions_error"] = str(exc)
+
+    try:
+        logs = client.get(
+            "/api/logs",
+            params={"task_id": task_id, "page": 1, "page_size": 5},
+        )
+        diagnostics["recent_logs"] = {
+            "total": logs.get("total", 0),
+            "items": [
+                {
+                    "level": item.get("level"),
+                    "event": item.get("event"),
+                    "message": item.get("message"),
+                }
+                for item in logs.get("items", [])
+            ],
+        }
+    except Exception as exc:
+        diagnostics["logs_error"] = str(exc)
+
+    return diagnostics
+
+
 # Real end-to-end flow:
 # 1) create task -> 2) worker executes real provider call -> 3) poll status -> 4) fetch task result
 #
@@ -179,20 +233,32 @@ def main() -> None:
 
         terminal_statuses = {"COMPLETED", "FAILED"}
         deadline = time.monotonic() + timeout_seconds
+        final_row: dict[str, Any] | None = None
         while True:
             row = client.get(f"/api/tasks/{task_id}")
-            pretty_print("task status", {"id": row["id"], "status": row["status"], "latest_trace_id": row.get("latest_trace_id")})
+            pretty_print(
+                "task status",
+                {
+                    "id": row["id"],
+                    "status": row["status"],
+                    "latest_trace_id": row.get("latest_trace_id"),
+                    "error_message": row.get("error_message"),
+                },
+            )
 
             if row["status"] in terminal_statuses:
+                final_row = row
                 break
             if time.monotonic() >= deadline:
+                diagnostics = _collect_pending_diagnostics(client, task_id)
+                pretty_print("pending diagnostics", diagnostics)
                 raise TimeoutError(
                     f"task not finished in {timeout_seconds}s; check worker/server logs for details"
                 )
             time.sleep(poll_interval_seconds)
 
-        result = client.get(f"/api/tasks/{task_id}/result")
-        pretty_print("task result (real provider output)", _compact_result(result))
+        if final_row is not None:
+            pretty_print("task result (merged task payload)", _compact_result(final_row))
     finally:
         client.close()
 

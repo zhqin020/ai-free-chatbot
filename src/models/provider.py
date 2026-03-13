@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, Field
+
+
+class TaskDispatchMode(str, Enum):
+    ROUND_ROBIN = "round_robin"
+    PRIORITY = "priority"
 
 
 class ProviderConfigCreate(BaseModel):
@@ -29,6 +35,8 @@ class ProviderConfigRead(BaseModel):
 class ProviderOpenResponse(BaseModel):
     name: str
     url: str
+    opened_in_server: bool = False
+    open_message: str | None = None
 
 
 class ProviderClearSessionsResponse(BaseModel):
@@ -41,3 +49,12 @@ class ProviderSessionTargetResponse(BaseModel):
     name: str
     session_provider: str | None = None
     sessions_url: str
+
+
+class TaskDispatchConfigRead(BaseModel):
+    mode: TaskDispatchMode
+    updated_at: datetime
+
+
+class TaskDispatchConfigUpdate(BaseModel):
+    mode: TaskDispatchMode

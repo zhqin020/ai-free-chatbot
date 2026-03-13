@@ -7,7 +7,12 @@ from typing import Optional
 from src.models.session import Provider, SessionState
 from src.models.task import TaskStatus
 from src.storage.database import SessionORM
-from src.storage.repositories import AttemptRepository, SessionRepository, TaskRepository
+from src.storage.repositories import (
+    AttemptRepository,
+    SessionRepository,
+    TaskDispatchConfigRepository,
+    TaskRepository,
+)
 
 
 @dataclass
@@ -26,26 +31,28 @@ class WeightedRoundRobinScheduler:
         session_repo: SessionRepository | None = None,
         task_repo: TaskRepository | None = None,
         attempt_repo: AttemptRepository | None = None,
+        dispatch_config_repo: TaskDispatchConfigRepository | None = None,
         timeout_seconds: int = 120,
-        max_retries: int = 3,
     ) -> None:
         self.session_repo = session_repo or SessionRepository()
         self.task_repo = task_repo or TaskRepository()
         self.attempt_repo = attempt_repo or AttemptRepository()
+        self.dispatch_config_repo = dispatch_config_repo or TaskDispatchConfigRepository()
         self.timeout_seconds = timeout_seconds
-        self.max_retries = max_retries
         self._cursor = 0
 
     def recover_timeouts(self) -> list[str]:
         return self.task_repo.recover_timeouts(
             timeout_seconds=self.timeout_seconds,
-            max_retries=self.max_retries,
         )
 
     def dispatch_next(self) -> Optional[DispatchDecision]:
         recovered = self.recover_timeouts()
         if recovered:
             pass
+
+        # Keep BUSY sessions from being stuck forever after process interruption.
+        self.session_repo.recover_stuck_busy_sessions(timeout_seconds=self.timeout_seconds)
 
         session_row = self._pick_next_ready_session()
         if session_row is None:
@@ -96,7 +103,7 @@ class WeightedRoundRobinScheduler:
             latency_ms=latency_ms,
             error_message=error_message,
         )
-        self.task_repo.mark_status(task_id=task_id, status=TaskStatus.PENDING)
+        self.task_repo.mark_status(task_id=task_id, status=TaskStatus.FAILED)
         lowered = error_message.lower()
         if (
             "session not logged in" in lowered
@@ -144,15 +151,20 @@ class WeightedRoundRobinScheduler:
         if not ready_sessions:
             return None
 
-        weighted: list[SessionORM] = []
-        for row in ready_sessions:
-            weight = max(1, 201 - min(200, row.priority))
-            weighted.extend([row] * weight)
+        mode = self.dispatch_config_repo.get_mode()
+        pool: list[SessionORM] = []
+        if mode == "priority":
+            for row in ready_sessions:
+                weight = max(1, 201 - min(200, row.priority))
+                pool.extend([row] * weight)
+        else:
+            # Round-robin mode ignores priority and rotates evenly among READY sessions.
+            pool = sorted(ready_sessions, key=lambda row: row.id)
 
-        if not weighted:
+        if not pool:
             return None
 
-        idx = self._cursor % len(weighted)
-        selected = weighted[idx]
-        self._cursor = (self._cursor + 1) % len(weighted)
+        idx = self._cursor % len(pool)
+        selected = pool[idx]
+        self._cursor = (self._cursor + 1) % len(pool)
         return selected

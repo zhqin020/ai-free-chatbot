@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
 
+from src.api.browser_open_service import open_page_in_server_browser
 from src.models.session import (
     Provider,
     SessionConfig,
@@ -230,7 +231,7 @@ def notify_ready(session_id: str) -> SessionRead:
 
 
 @router.post("/{session_id}/open", response_model=SessionOpenRead)
-def open_session(session_id: str) -> SessionOpenRead:
+async def open_session(session_id: str) -> SessionOpenRead:
     row = session_repo.get(session_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
@@ -249,6 +250,21 @@ def open_session(session_id: str) -> SessionOpenRead:
 
     if current_http is not None:
         tracking_repo.update_http_session(row.id, current_http)
+
+    opened, open_message = await open_page_in_server_browser(
+        key=row.id,
+        url=row.chat_url,
+        provider=row.provider.value,
+    )
+
+    if opened:
+        # Operator-triggered open implies human has prepared this session in browser.
+        # Promote to READY to unblock scheduler; if still not actually ready,
+        # worker will classify back to WAIT_LOGIN on next attempt.
+        session_repo.update_state(row.id, SessionState.READY, login_state="logged_in")
+        tracking_repo.update_status(row.id, SessionState.READY.value)
+    else:
+        warning = f"{warning} | {open_message}" if warning else open_message
 
     return SessionOpenRead(
         session_id=row.id,

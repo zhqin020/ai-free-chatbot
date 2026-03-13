@@ -106,3 +106,20 @@ def test_mock_openai_stop_endpoint(client: TestClient, monkeypatch: pytest.Monke
     assert body["action"] == "stop"
     assert body["status"]["running"] is False
     assert body["status"]["message"] == "stopped force=True"
+
+
+def test_mock_openai_open_browser_endpoint(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.api.routers import mock_openai as router_module
+
+    async def _fake_open_page_in_server_browser(*, key: str, url: str, provider: str) -> tuple[bool, str]:
+        _ = key
+        _ = provider
+        return True, f"opened in server browser: {url}"
+
+    monkeypatch.setattr(router_module, "open_page_in_server_browser", _fake_open_page_in_server_browser)
+
+    response = client.post("/api/mock-openai/open-browser?host=127.0.0.1&port=8010")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["url"] == "http://127.0.0.1:8010/"
+    assert body["opened_in_server"] is True

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -46,7 +46,7 @@ class TaskResult(BaseModel):
     status: str
     provider: Optional[Provider] = None
     raw_response: Optional[str] = None
-    extracted_json: Optional[LegalExtraction] = None
+    extracted_json: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     retry_count: int = 0
     created_at: datetime

@@ -70,7 +70,7 @@ async def test_worker_marks_completed_after_extraction_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_worker_requeues_on_extraction_failure_first_attempt() -> None:
+async def test_worker_fails_on_extraction_failure_without_retry() -> None:
     _setup_db("tmp/test_worker_extract_retry.db")
 
     registry = SessionRegistry()
@@ -96,5 +96,5 @@ async def test_worker_requeues_on_extraction_failure_first_attempt() -> None:
 
     updated = repo.get(task.id)
     assert updated is not None
-    assert updated.status == TaskStatus.PENDING
-    assert "[FORMAT_RETRY]" in updated.prompt_text
+    assert updated.status == TaskStatus.FAILED
+    assert "[FORMAT_RETRY]" not in updated.prompt_text

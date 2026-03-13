@@ -148,15 +148,32 @@ async function stopMockOpenAI() {
 }
 
 function openMockOpenAIPage() {
-	try {
-		const host = getHost();
-		const port = parsePort();
-		const target = `http://${host}:${port}/`;
-		window.open(target, "_blank", "noopener,noreferrer");
-		showToast(`已打开页面: ${target}`);
-	} catch (error) {
-		showToast(String(error), true);
-	}
+	setBusy(true);
+	const run = async () => {
+		try {
+			const host = getHost();
+			const port = parsePort();
+			const response = await fetch(
+				`/api/mock-openai/open-browser?host=${encodeURIComponent(host)}&port=${port}`,
+				{ method: "POST" },
+			);
+			if (!response.ok) {
+				throw new Error(`打开失败: HTTP ${response.status}`);
+			}
+			const body = await response.json();
+			if (body?.opened_in_server) {
+				showToast(body.open_message || "已在服务器浏览器打开页面");
+			} else {
+				showToast(body?.open_message || "服务器浏览器打开失败", true);
+			}
+		} catch (error) {
+			showToast(String(error), true);
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	run();
 }
 
 refreshBtn.addEventListener("click", fetchStatus);

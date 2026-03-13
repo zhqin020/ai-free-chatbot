@@ -17,6 +17,7 @@ from src.storage.database import (
     SessionORM,
     SessionTrackingORM,
     SystemLogORM,
+    TaskDispatchConfigORM,
     TaskAttemptORM,
     TaskORM,
     session_scope,
@@ -98,15 +99,18 @@ class SessionRepository:
                 session.delete(row)
             return count
 
-    def recover_stuck_busy_sessions(self) -> int:
+    def recover_stuck_busy_sessions(self, timeout_seconds: int | None = None) -> int:
         with session_scope() as session:
-            rows = session.execute(
-                select(SessionORM).where(
-                    SessionORM.enabled.is_(True),
-                    SessionORM.state == SessionState.BUSY,
-                    SessionORM.login_state != "need_login",
-                )
-            ).scalars().all()
+            stmt = select(SessionORM).where(
+                SessionORM.enabled.is_(True),
+                SessionORM.state == SessionState.BUSY,
+                SessionORM.login_state != "need_login",
+            )
+            if timeout_seconds is not None and timeout_seconds > 0:
+                threshold = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
+                stmt = stmt.where(SessionORM.updated_at < threshold)
+
+            rows = session.execute(stmt).scalars().all()
             for row in rows:
                 row.state = SessionState.READY
                 row.updated_at = datetime.now(UTC)
@@ -163,7 +167,7 @@ class TaskRepository:
             session.flush()
             return True
 
-    def recover_timeouts(self, timeout_seconds: int, max_retries: int = 3) -> list[str]:
+    def recover_timeouts(self, timeout_seconds: int) -> list[str]:
         threshold = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
         recovered: list[str] = []
         with session_scope() as session:
@@ -175,13 +179,7 @@ class TaskRepository:
             ).scalars().all()
 
             for task in dispatched:
-                attempts = session.execute(
-                    select(func.count(TaskAttemptORM.id)).where(TaskAttemptORM.task_id == task.id)
-                ).scalar_one()
-                if attempts >= max_retries:
-                    task.status = TaskStatus.FAILED
-                else:
-                    task.status = TaskStatus.PENDING
+                task.status = TaskStatus.FAILED
                 task.updated_at = datetime.now(UTC)
                 recovered.append(task.id)
 
@@ -323,6 +321,63 @@ class ProviderConfigRepository:
                 return False
             session.delete(row)
             return True
+
+
+class TaskDispatchConfigRepository:
+    DEFAULT_MODE = "round_robin"
+    ALLOWED_MODES = {"round_robin", "priority"}
+
+    def ensure_default(self) -> TaskDispatchConfigORM:
+        now = datetime.now(UTC)
+        with session_scope() as session:
+            row = session.get(TaskDispatchConfigORM, 1)
+            if row is None:
+                row = TaskDispatchConfigORM(
+                    id=1,
+                    mode=self.DEFAULT_MODE,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+                session.flush()
+                session.refresh(row)
+            return row
+
+    def get(self) -> TaskDispatchConfigORM:
+        self.ensure_default()
+        with session_scope() as session:
+            row = session.get(TaskDispatchConfigORM, 1)
+            if row is None:
+                raise RuntimeError("task dispatch config not initialized")
+            return row
+
+    def get_mode(self) -> str:
+        row = self.get()
+        if row.mode not in self.ALLOWED_MODES:
+            return self.DEFAULT_MODE
+        return row.mode
+
+    def set_mode(self, mode: str) -> TaskDispatchConfigORM:
+        if mode not in self.ALLOWED_MODES:
+            raise ValueError(f"unsupported task dispatch mode: {mode}")
+
+        now = datetime.now(UTC)
+        with session_scope() as session:
+            row = session.get(TaskDispatchConfigORM, 1)
+            if row is None:
+                row = TaskDispatchConfigORM(
+                    id=1,
+                    mode=mode,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+            else:
+                row.mode = mode
+                row.updated_at = now
+            session.flush()
+            session.refresh(row)
+            return row
 
 
 class SessionTrackingRepository:

@@ -60,6 +60,19 @@ class ProviderConfigORM(Base):
     )
 
 
+class TaskDispatchConfigORM(Base):
+    __tablename__ = "task_dispatch_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class SessionTrackingORM(Base):
     __tablename__ = "session_tracking"
 

@@ -116,14 +116,23 @@ class BrowserController:
     async def close(self) -> None:
         logger.debug("browser.close begin persistent=%s", self._persistent_context)
         if self._context is not None:
-            await self._context.close()
+            try:
+                await self._context.close()
+            except Exception as exc:
+                logger.warning("browser.close context close failed: %s", exc)
             self._context = None
         if self._browser is not None and not self._persistent_context:
-            await self._browser.close()
+            try:
+                await self._browser.close()
+            except Exception as exc:
+                logger.warning("browser.close browser close failed: %s", exc)
             self._browser = None
         self._browser = None
         if self._playwright is not None:
-            await self._playwright.stop()
+            try:
+                await self._playwright.stop()
+            except Exception as exc:
+                logger.warning("browser.close playwright stop failed: %s", exc)
             self._playwright = None
         logger.debug("browser.close completed")
 

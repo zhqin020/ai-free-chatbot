@@ -8,9 +8,15 @@ from src.browser.providers.openchat_adapter import OpenChatAdapter
 
 
 class FakeLocator:
-    def __init__(self, visible: bool = False, text_items: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        visible: bool = False,
+        text_items: list[str] | None = None,
+        text_sequence: list[list[str]] | None = None,
+    ) -> None:
         self._visible = visible
         self._text_items = text_items or []
+        self._text_sequence = text_sequence
         self.filled: str | None = None
         self.clicked = False
         self.pressed: str | None = None
@@ -32,6 +38,10 @@ class FakeLocator:
         self.pressed = key
 
     async def all_inner_texts(self) -> list[str]:
+        if self._text_sequence is not None:
+            if len(self._text_sequence) > 1:
+                return self._text_sequence.pop(0)
+            return self._text_sequence[0]
         return self._text_items
 
 
@@ -86,3 +96,38 @@ async def test_wait_for_response_returns_latest_non_previous() -> None:
 
     result = await adapter.wait_for_response(page, previous_response="old", timeout_ms=100)
     assert result == "new answer"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_response_accepts_identical_text_when_new_message_appended() -> None:
+    adapter = OpenChatAdapter()
+    adapter.poll_interval_seconds = 0.01
+    response_loc = FakeLocator(
+        visible=True,
+        text_sequence=[
+            ["same json"],
+            ["same json", "same json"],
+        ],
+    )
+    page = FakePage(
+        {
+            "[data-testid='assistant-message']": response_loc,
+        }
+    )
+
+    result = await adapter.wait_for_response(page, previous_response="same json", timeout_ms=200)
+    assert result == "same json"
+
+
+@pytest.mark.asyncio
+async def test_inspect_page_state_prefers_chat_input_over_login_hint() -> None:
+    adapter = OpenChatAdapter()
+    page = FakePage(
+        {
+            "textarea[data-testid='chat-input']": FakeLocator(visible=True),
+            "button:has-text('Sign in')": FakeLocator(visible=True),
+        }
+    )
+
+    state = await adapter.inspect_page_state(page)
+    assert state.chat_ready is True

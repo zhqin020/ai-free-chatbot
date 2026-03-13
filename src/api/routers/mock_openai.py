@@ -13,6 +13,8 @@ from pathlib import Path
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
+from src.api.browser_open_service import open_page_in_server_browser
+
 router = APIRouter(prefix="/api/mock-openai", tags=["mock-openai"])
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -45,6 +47,12 @@ class MockOpenAIStatusResponse(BaseModel):
 class MockOpenAIActionResponse(BaseModel):
     action: str
     status: MockOpenAIStatusResponse
+
+
+class MockOpenAIOpenResponse(BaseModel):
+    url: str
+    opened_in_server: bool = False
+    open_message: str | None = None
 
 
 def _now_utc() -> datetime:
@@ -311,3 +319,21 @@ def stop_mock_openai(
     with _STATE_LOCK:
         status = _stop_mock_openai(host=host, port=port, force=force)
     return MockOpenAIActionResponse(action="stop", status=status)
+
+
+@router.post("/open-browser", response_model=MockOpenAIOpenResponse)
+async def open_mock_openai_browser(
+    host: str = Query(default="127.0.0.1"),
+    port: int = Query(default=8010, ge=1, le=65535),
+) -> MockOpenAIOpenResponse:
+    url = f"http://{host}:{port}/"
+    opened, message = await open_page_in_server_browser(
+        key="s-mock_openai-1",
+        url=url,
+        provider="openchat",
+    )
+    return MockOpenAIOpenResponse(
+        url=url,
+        opened_in_server=opened,
+        open_message=message,
+    )

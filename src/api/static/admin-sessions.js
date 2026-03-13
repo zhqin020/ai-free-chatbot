@@ -259,18 +259,11 @@ async function handleRowAction(event) {
 				return;
 			}
 		}
-		if (result && result.chat_url) {
-			const existing = state.openedWindows.get(id);
-			if (existing && !existing.closed) {
-				existing.focus();
-			} else {
-				const opened = window.open(result.chat_url, "_blank", "noopener,noreferrer");
-				if (opened) {
-					state.openedWindows.set(id, opened);
-				}
-			}
+		if (result?.warning) {
+			showToast(`会话打开提示: ${result.warning}`);
+		} else {
+			showToast(`已在服务器浏览器打开会话页面: ${id}`);
 		}
-		showToast(`已打开会话页面: ${id}`);
 	}
 
 	if (action === "stats") {
