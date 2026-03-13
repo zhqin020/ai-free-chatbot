@@ -60,6 +60,19 @@ class ProviderConfigORM(Base):
     )
 
 
+class SessionTrackingORM(Base):
+    __tablename__ = "session_tracking"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    http_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class TaskORM(Base):
     __tablename__ = "tasks"
 

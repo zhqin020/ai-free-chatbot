@@ -74,29 +74,8 @@ def test_provider_crud_and_actions(client: TestClient) -> None:
 
 
 def test_clear_sessions_by_provider_mapping(client: TestClient) -> None:
-    create_mock = client.post(
-        "/api/sessions",
-        json={
-            "id": "s-openchat-1",
-            "provider": "openchat",
-            "chat_url": "http://127.0.0.1:8010/",
-            "enabled": True,
-            "priority": 10,
-        },
-    )
-    assert create_mock.status_code == 201
-
-    create_deepseek = client.post(
-        "/api/sessions",
-        json={
-            "id": "s-deepseek-1",
-            "provider": "deepseek",
-            "chat_url": "https://chat.deepseek.com/",
-            "enabled": True,
-            "priority": 20,
-        },
-    )
-    assert create_deepseek.status_code == 201
+    discover_resp = client.post("/api/sessions/discover")
+    assert discover_resp.status_code == 200
 
     clear_resp = client.post("/api/providers/mock_openai/clear-sessions")
     assert clear_resp.status_code == 200
@@ -106,5 +85,5 @@ def test_clear_sessions_by_provider_mapping(client: TestClient) -> None:
     list_resp = client.get("/api/sessions")
     assert list_resp.status_code == 200
     ids = {row["id"] for row in list_resp.json()}
-    assert "s-openchat-1" not in ids
+    assert "s-mock_openai-1" not in ids
     assert "s-deepseek-1" in ids

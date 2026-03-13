@@ -102,11 +102,31 @@ class WeightedRoundRobinScheduler:
             "session not logged in" in lowered
             or "login required" in lowered
             or "human verification" in lowered
+            or "chat window is not ready" in lowered
         ):
             self.session_repo.update_state(
                 session_id,
                 SessionState.WAIT_LOGIN,
                 login_state="need_login",
+            )
+        elif (
+            "missing x server" in lowered
+            or "$display" in lowered
+            or "looks like you launched a headed browser" in lowered
+            or "maximum number of clients reached" in lowered
+            or "ozone_platform_x11" in lowered
+            or "err_connection_refused" in lowered
+            or "connection refused" in lowered
+            or "net::err_connection_refused" in lowered
+            or "err_name_not_resolved" in lowered
+            or "name not resolved" in lowered
+            or "err_internet_disconnected" in lowered
+            or "timed out" in lowered
+        ):
+            self.session_repo.update_state(
+                session_id,
+                SessionState.UNHEALTHY,
+                login_state="runtime_error",
             )
         else:
             self.session_repo.update_state(session_id, SessionState.READY)

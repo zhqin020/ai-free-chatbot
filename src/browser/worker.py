@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import logging
 from os import getenv
 from time import perf_counter
 from typing import Protocol
@@ -21,6 +22,9 @@ from src.models.task import TaskStatus
 from src.parser import JSONValidator, ResponseExtractor, RetryHandler
 from src.prompt import PromptGenerator
 from src.storage.repositories import LogRepository, SessionRepository, TaskRepository
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -66,7 +70,30 @@ class PooledProviderTaskProcessor:
             self.headless = headless
         self.session_pool = session_pool or BrowserSessionPool(headless=self.headless)
 
+    @staticmethod
+    def _is_login_gate_message(message: str) -> bool:
+        lowered = message.lower()
+        return any(
+            token in lowered
+            for token in (
+                "session not logged in",
+                "login required",
+                "human verification",
+                "cookie consent",
+                "chat window is not ready",
+                "chat input unavailable",
+                "input selector not found",
+            )
+        )
+
     async def process(self, decision: DispatchDecision) -> ProcessResult:
+        logger.debug(
+            "worker.process begin task_id=%s session_id=%s provider=%s attempt_no=%s",
+            decision.task_id,
+            decision.session_id,
+            decision.provider.value,
+            decision.attempt_no,
+        )
         if decision.provider != self.provider:
             return ProcessResult(
                 ok=False,
@@ -84,17 +111,40 @@ class PooledProviderTaskProcessor:
             )
 
         try:
+            logger.debug(
+                "worker.process get_page session_id=%s provider=%s url=%s",
+                session_row.id,
+                decision.provider.value,
+                session_row.chat_url,
+            )
             page = await self.session_pool.get_page(
                 session_id=session_row.id,
                 url=session_row.chat_url,
                 provider=decision.provider.value,
             )
+            logger.debug(
+                "worker.process get_page done session_id=%s current_url=%s",
+                session_row.id,
+                getattr(page, "url", ""),
+            )
 
             page_state = await self._inspect_adapter_page_state(page)
+            if page_state is not None:
+                logger.info(
+                    "worker.process page_state session_id=%s chat_ready=%s cookie_required=%s verification_required=%s login_required=%s",
+                    session_row.id,
+                    getattr(page_state, "chat_ready", None),
+                    getattr(page_state, "cookie_required", None),
+                    getattr(page_state, "verification_required", None),
+                    getattr(page_state, "login_required", None),
+                )
+            else:
+                logger.debug("worker.process page_state unavailable session_id=%s", session_row.id)
 
             logged_in = await self.adapter.is_logged_in(page)
             if page_state is not None:
                 logged_in = page_state.chat_ready
+            logger.info("worker.process login_decision session_id=%s logged_in=%s", session_row.id, logged_in)
 
             if not logged_in:
                 try:
@@ -148,6 +198,12 @@ class PooledProviderTaskProcessor:
                     SessionState.WAIT_LOGIN,
                     login_state="need_login",
                 )
+                logger.warning(
+                    "worker.process gate_wait_login session_id=%s provider=%s reason=%s",
+                    session_row.id,
+                    decision.provider.value,
+                    login_message,
+                )
                 return ProcessResult(
                     ok=False,
                     error_message=login_message,
@@ -163,14 +219,49 @@ class PooledProviderTaskProcessor:
                 timeout_ms=self.timeout_ms,
             )
             if not response:
+                logger.warning("worker.process response_timeout session_id=%s task_id=%s", session_row.id, decision.task_id)
                 return ProcessResult(ok=False, error_message="response timeout")
+            logger.info("worker.process response_received session_id=%s task_id=%s", session_row.id, decision.task_id)
             return ProcessResult(ok=True, raw_response=response)
         except Exception as exc:
+            error_message = str(exc)
+            logger.exception(
+                "worker.process exception task_id=%s session_id=%s provider=%s error=%s",
+                decision.task_id,
+                session_row.id,
+                decision.provider.value,
+                error_message,
+            )
+            if self._is_login_gate_message(error_message):
+                self.session_repo.update_state(
+                    session_row.id,
+                    SessionState.WAIT_LOGIN,
+                    login_state="need_login",
+                )
+                logger.warning(
+                    "worker.process exception_classified_wait_login task_id=%s session_id=%s",
+                    decision.task_id,
+                    session_row.id,
+                )
+                return ProcessResult(
+                    ok=False,
+                    error_message=(
+                        "chat window is not ready; please complete required steps in opened browser, "
+                        "then notify worker readiness via /admin/sessions (Mark Login OK) "
+                        "or POST /api/sessions/{session_id}/notify-ready"
+                    ),
+                )
+            logger.warning(
+                "worker.process exception_reset_session task_id=%s session_id=%s provider=%s",
+                decision.task_id,
+                session_row.id,
+                decision.provider.value,
+            )
             await self.session_pool.reset_session(
                 session_row.id,
                 provider=decision.provider.value,
             )
-            return ProcessResult(ok=False, error_message=str(exc))
+            return ProcessResult(ok=False, error_message=error_message)
 
     async def close(self) -> None:
         await self.session_pool.close_all()
@@ -411,6 +502,7 @@ class SchedulerWorker:
                 "session not logged in" in result.error_message.lower()
                 or "login required" in result.error_message.lower()
                 or "human verification" in result.error_message.lower()
+                or "chat window is not ready" in result.error_message.lower()
             ):
                 self.log_repo.add_log(
                     trace_id=trace_id,

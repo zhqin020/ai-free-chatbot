@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 
 <head>
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Session Console</title>
+	<title>Session Ready Console</title>
 	<link rel="stylesheet" href="/ui/admin-sessions.css" />
 	<script defer src="/ui/admin-sessions.js"></script>
 </head>
@@ -14,8 +14,9 @@
 	<main class="shell">
 		<header class="hero">
 			<p class="kicker">AI OPS</p>
-			<h1>Session Management Console</h1>
-			<p class="subtitle">Manage provider sessions, login state, priority, and routing targets.</p>
+			<h1>人工操作结果回填面板</h1>
+			<p class="subtitle">自动发现 provider 会话、查看当前状态，并回填人工处理结果（是否就绪）。
+			</p>
 			<p class="subtitle nav-inline">
 				<a href="/admin">入口</a>
 				<a href="/admin/settings">设置</a>
@@ -24,54 +25,10 @@
 			</p>
 		</header>
 
-		<section class="panel" aria-label="Session form">
-			<div class="panel-head">
-				<h2 id="form-title">Create Session</h2>
-				<button id="reset-form" type="button" class="btn btn-ghost">Reset</button>
-			</div>
-			<form id="session-form" class="form-grid">
-				<input id="editing-id" type="hidden" />
-
-				<label>
-					Session ID
-					<input id="session-id" name="id" required minlength="1" placeholder="s-openchat-1" />
-				</label>
-
-				<label>
-					Provider
-					<select id="provider" name="provider" required>
-						<option value="openchat">openchat</option>
-						<option value="gemini">gemini</option>
-						<option value="grok">grok</option>
-						<option value="deepseek">deepseek</option>
-					</select>
-				</label>
-
-				<label class="span-2">
-					Chat URL
-					<input id="chat-url" name="chat_url" type="url" required placeholder="https://example.com/chat" />
-				</label>
-
-				<label>
-					Priority (1-200)
-					<input id="priority" name="priority" type="number" min="1" max="200" value="100" required />
-				</label>
-
-				<label class="inline">
-					<input id="enabled" name="enabled" type="checkbox" checked />
-					Enabled
-				</label>
-
-				<div class="span-2 actions">
-					<button id="submit-btn" type="submit" class="btn btn-primary">Create</button>
-					<button id="refresh-btn" type="button" class="btn btn-secondary">Refresh</button>
-				</div>
-			</form>
-		</section>
-
 		<section class="panel" aria-label="Session list">
 			<div class="panel-head">
-				<h2>Sessions</h2>
+				<h2>会话状态</h2>
+				<button id="refresh-btn" type="button" class="btn btn-secondary">发现并刷新</button>
 				<div class="tiny-stats">
 					<span id="count-total">Total: 0</span>
 					<span id="count-filtered">Filtered: 0</span>
@@ -82,7 +39,7 @@
 
 			<div class="filter-bar" aria-label="Session filters">
 				<label>
-					Search
+					搜索
 					<input id="filter-keyword" placeholder="id, provider, login state" />
 				</label>
 				<label>
@@ -96,7 +53,7 @@
 					</select>
 				</label>
 				<label>
-					State
+					状态
 					<select id="filter-state">
 						<option value="all">all</option>
 						<option value="READY">READY</option>
@@ -107,7 +64,7 @@
 					</select>
 				</label>
 				<label>
-					Enabled
+					启用
 					<select id="filter-enabled">
 						<option value="all">all</option>
 						<option value="yes">yes</option>
@@ -115,31 +72,25 @@
 					</select>
 				</label>
 				<div class="filter-actions">
-					<button id="clear-filters" type="button" class="btn btn-ghost">Clear Filters</button>
+					<button id="clear-filters" type="button" class="btn btn-ghost">清空筛选</button>
 				</div>
-			</div>
-
-			<div class="batch-bar" aria-label="Batch actions">
-				<span id="selected-count">Selected: 0</span>
-				<button id="select-filtered" type="button" class="btn btn-secondary">Select Filtered</button>
-				<button id="clear-selection" type="button" class="btn btn-ghost">Clear Selection</button>
-				<button id="batch-enable" type="button" class="btn btn-secondary">Batch Enable</button>
-				<button id="batch-disable" type="button" class="btn btn-secondary">Batch Disable</button>
 			</div>
 
 			<div class="table-wrap">
 				<table>
 					<thead>
 						<tr>
-							<th>Select</th>
 							<th>ID</th>
+							<th>Session Name</th>
+							<th>HTTP Session</th>
 							<th>Provider</th>
-							<th>State</th>
-							<th>Login</th>
+							<th>状态</th>
+							<th>登录状态</th>
+							<th>开始时间</th>
 							<th>Priority</th>
-							<th>Enabled</th>
-							<th>Updated</th>
-							<th>Actions</th>
+							<th>启用</th>
+							<th>更新时间</th>
+							<th>操作（统计/验证/就绪/打开）</th>
 						</tr>
 					</thead>
 					<tbody id="session-rows"></tbody>
@@ -149,11 +100,11 @@
 
 		<section class="panel" aria-label="Recent errors">
 			<div class="panel-head">
-				<h2>Recent Error Summary</h2>
-				<button id="refresh-errors" type="button" class="btn btn-ghost">Refresh Errors</button>
+				<h2>最近错误摘要</h2>
+				<button id="refresh-errors" type="button" class="btn btn-ghost">刷新错误</button>
 			</div>
 			<div id="error-summary" class="error-summary">
-				<p class="muted">No recent errors.</p>
+				<p class="muted">暂无错误。</p>
 			</div>
 			<div class="table-wrap">
 				<table>

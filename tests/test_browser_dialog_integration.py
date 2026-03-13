@@ -64,10 +64,12 @@ class FakeAdapter:
         logged_in: bool,
         response: str = "",
         page_state: "FakePageState | None" = None,
+        send_error: str | None = None,
     ) -> None:
         self.logged_in = logged_in
         self.response = response
         self.page_state = page_state
+        self.send_error = send_error
         self.last_previous_response: str | None = None
         self.sent_messages: list[str] = []
 
@@ -81,6 +83,8 @@ class FakeAdapter:
 
     async def send_message(self, page: FakePage, message: str) -> None:
         _ = page
+        if self.send_error:
+            raise RuntimeError(self.send_error)
         self.sent_messages.append(message)
 
     async def wait_for_response(
@@ -294,3 +298,42 @@ async def test_processor_uses_page_state_chat_ready_even_if_logged_in_check_fals
     assert result.ok is True
     assert result.raw_response == "{\"ok\": true}"
     assert len(adapter.sent_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_processor_does_not_reset_session_for_chat_not_ready_exception() -> None:
+    session_id, task_id = _prepare_task_and_session("tmp/test_browser_dialog_input_unavailable.db")
+
+    page = FakePage(verify_visible=False)
+    pool = FakeSessionPool(page)
+    adapter = FakeAdapter(
+        logged_in=True,
+        send_error="chat window is not ready (input selector not found)",
+    )
+
+    processor = PooledProviderTaskProcessor(
+        provider=Provider.OPENCHAT,
+        adapter=adapter,
+        session_pool=pool,
+    )
+
+    result = await processor.process(
+        DispatchDecision(
+            task_id=task_id,
+            session_id=session_id,
+            provider=Provider.OPENCHAT,
+            attempt_id=1,
+            attempt_no=1,
+            dispatched_at=datetime.now(UTC),
+        )
+    )
+
+    assert result.ok is False
+    assert "chat window is not ready" in (result.error_message or "")
+    assert "notify-ready" in (result.error_message or "")
+    assert pool.reset_calls == []
+
+    session_row = SessionRepository().get(session_id)
+    assert session_row is not None
+    assert session_row.state == SessionState.WAIT_LOGIN
+    assert session_row.login_state == "need_login"

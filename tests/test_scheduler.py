@@ -106,6 +106,50 @@ def test_scheduler_marks_wait_login_on_human_verification_error() -> None:
     assert session_row.login_state == "need_login"
 
 
+def test_scheduler_marks_wait_login_on_chat_window_not_ready_error() -> None:
+    _setup_test_db()
+    registry = SessionRegistry()
+    registry.register(
+        SessionConfig(
+            id="s-openchat-not-ready",
+            provider=Provider.OPENCHAT,
+            chat_url="https://example.com/openchat",
+            enabled=True,
+            priority=10,
+        )
+    )
+    registry.mark_ready("s-openchat-not-ready")
+
+    task_repo = TaskRepository()
+    task = task_repo.create(
+        TaskCreate(
+            prompt="提取关键字段",
+            document_text="示例文书",
+            provider_hint=Provider.OPENCHAT,
+        )
+    )
+
+    scheduler = WeightedRoundRobinScheduler(timeout_seconds=30, max_retries=3)
+    decision = scheduler.dispatch_next()
+    assert decision is not None
+
+    scheduler.mark_attempt_failed(
+        task_id=decision.task_id,
+        session_id=decision.session_id,
+        attempt_id=decision.attempt_id,
+        error_message="chat window is not ready; input selector not found",
+    )
+
+    updated_task = task_repo.get(task.id)
+    assert updated_task is not None
+    assert updated_task.status == TaskStatus.PENDING
+
+    session_row = SessionRepository().get("s-openchat-not-ready")
+    assert session_row is not None
+    assert session_row.state.value == "WAIT_LOGIN"
+    assert session_row.login_state == "need_login"
+
+
 def test_scheduler_does_not_dispatch_wait_login_session() -> None:
     _setup_test_db()
     registry = SessionRegistry()
@@ -136,3 +180,91 @@ def test_scheduler_does_not_dispatch_wait_login_session() -> None:
     scheduler = WeightedRoundRobinScheduler(timeout_seconds=30, max_retries=3)
     decision = scheduler.dispatch_next()
     assert decision is None
+
+
+def test_scheduler_marks_unhealthy_on_runtime_display_error() -> None:
+    _setup_test_db()
+    registry = SessionRegistry()
+    registry.register(
+        SessionConfig(
+            id="s-openchat-runtime",
+            provider=Provider.OPENCHAT,
+            chat_url="https://example.com/openchat",
+            enabled=True,
+            priority=10,
+        )
+    )
+    registry.mark_ready("s-openchat-runtime")
+
+    task_repo = TaskRepository()
+    task = task_repo.create(
+        TaskCreate(
+            prompt="提取关键字段",
+            document_text="示例文书",
+            provider_hint=Provider.OPENCHAT,
+        )
+    )
+
+    scheduler = WeightedRoundRobinScheduler(timeout_seconds=30, max_retries=3)
+    decision = scheduler.dispatch_next()
+    assert decision is not None
+
+    scheduler.mark_attempt_failed(
+        task_id=decision.task_id,
+        session_id=decision.session_id,
+        attempt_id=decision.attempt_id,
+        error_message="Looks like you launched a headed browser without having a XServer running",
+    )
+
+    updated_task = task_repo.get(task.id)
+    assert updated_task is not None
+    assert updated_task.status == TaskStatus.PENDING
+
+    session_row = SessionRepository().get("s-openchat-runtime")
+    assert session_row is not None
+    assert session_row.state.value == "UNHEALTHY"
+    assert session_row.login_state == "runtime_error"
+
+
+def test_scheduler_marks_unhealthy_on_connection_refused_error() -> None:
+    _setup_test_db()
+    registry = SessionRegistry()
+    registry.register(
+        SessionConfig(
+            id="s-openchat-conn-refused",
+            provider=Provider.OPENCHAT,
+            chat_url="http://127.0.0.1:8010/",
+            enabled=True,
+            priority=10,
+        )
+    )
+    registry.mark_ready("s-openchat-conn-refused")
+
+    task_repo = TaskRepository()
+    task = task_repo.create(
+        TaskCreate(
+            prompt="提取关键字段",
+            document_text="示例文书",
+            provider_hint=Provider.OPENCHAT,
+        )
+    )
+
+    scheduler = WeightedRoundRobinScheduler(timeout_seconds=30, max_retries=3)
+    decision = scheduler.dispatch_next()
+    assert decision is not None
+
+    scheduler.mark_attempt_failed(
+        task_id=decision.task_id,
+        session_id=decision.session_id,
+        attempt_id=decision.attempt_id,
+        error_message="Page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:8010/",
+    )
+
+    updated_task = task_repo.get(task.id)
+    assert updated_task is not None
+    assert updated_task.status == TaskStatus.PENDING
+
+    session_row = SessionRepository().get("s-openchat-conn-refused")
+    assert session_row is not None
+    assert session_row.state.value == "UNHEALTHY"
+    assert session_row.login_state == "runtime_error"

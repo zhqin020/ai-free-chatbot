@@ -91,3 +91,31 @@ async def test_session_pool_recreates_unhealthy_page() -> None:
     assert len(created) == 2
     assert created[0].closed == 1
     await pool.close_all()
+
+
+@pytest.mark.asyncio
+async def test_session_pool_warns_on_frequent_rebuilds(caplog: pytest.LogCaptureFixture) -> None:
+    created: list[FakeController] = []
+    ticks = iter([0.0, 1.0, 2.0])
+
+    def factory() -> FakeController:
+        c = FakeController()
+        created.append(c)
+        return c
+
+    pool = BrowserSessionPool(
+        controller_factory=factory,
+        rebuild_warn_threshold=2,
+        rebuild_warn_window_seconds=60.0,
+        now_seconds=lambda: next(ticks),
+    )
+
+    with caplog.at_level("WARNING"):
+        _ = await pool.get_page("s1", "https://a.com")
+        created[0].healthy = False
+        _ = await pool.get_page("s1", "https://a.com")
+        created[1].healthy = False
+        _ = await pool.get_page("s1", "https://a.com")
+
+    assert any("pool.rebuild.alert" in rec.message for rec in caplog.records)
+    await pool.close_all()

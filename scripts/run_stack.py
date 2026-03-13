@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -40,6 +41,21 @@ def _build_worker_cmd(max_loops: int | None) -> list[str]:
     return cmd
 
 
+def _build_mock_openchat_cmd(host: str, port: int, reload_enabled: bool) -> list[str]:
+    cmd = [
+        sys.executable,
+        "-m",
+        "scripts.run_mock_openchat",
+        "--host",
+        host,
+        "--port",
+        str(port),
+    ]
+    if reload_enabled:
+        cmd.append("--reload")
+    return cmd
+
+
 def _terminate(proc: subprocess.Popen[bytes], name: str) -> None:
     if proc.poll() is not None:
         return
@@ -62,6 +78,77 @@ def _ensure_port_available(host: str, port: int) -> None:
             sock.bind((bind_host, port))
         except OSError as exc:
             raise RuntimeError(f"api port {host}:{port} is unavailable: {exc}") from exc
+
+
+def _is_tcp_port_open(host: str, port: int) -> bool:
+    connect_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    try:
+        with socket.create_connection((connect_host, port), timeout=0.6):
+            return True
+    except OSError:
+        return False
+
+
+def _iter_listening_socket_inodes(port: int) -> set[str]:
+    inodes: set[str] = set()
+    target = f"{port:04X}"
+
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        path = Path(table)
+        if not path.exists():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            continue
+        for line in lines[1:]:
+            parts = line.split()
+            if len(parts) < 10:
+                continue
+            local = parts[1]
+            state = parts[3]
+            inode = parts[9]
+            if ":" not in local:
+                continue
+            _, local_port_hex = local.split(":", 1)
+            if local_port_hex.upper() != target:
+                continue
+            if state != "0A":
+                continue
+            inodes.add(inode)
+    return inodes
+
+
+def _find_listening_pids_for_port(port: int) -> list[int]:
+    inodes = _iter_listening_socket_inodes(port)
+    if not inodes:
+        return []
+
+    matched: set[int] = set()
+    proc_root = Path("/proc")
+    for pid_dir in proc_root.iterdir():
+        if not pid_dir.name.isdigit():
+            continue
+        fd_dir = pid_dir / "fd"
+        if not fd_dir.exists():
+            continue
+        try:
+            for fd in fd_dir.iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                if target.startswith("socket:[") and target.endswith("]"):
+                    inode = target[8:-1]
+                    if inode in inodes:
+                        matched.add(int(pid_dir.name))
+                        break
+        except PermissionError:
+            continue
+        except FileNotFoundError:
+            continue
+
+    return sorted(matched)
 
 
 def _check_ready_session(provider: Provider) -> bool:
@@ -128,6 +215,27 @@ def _wait_api_health(host: str, port: int, timeout_seconds: int, poll_interval_s
     )
 
 
+def _wait_mock_health(host: str, port: int, timeout_seconds: int, poll_interval_seconds: float) -> None:
+    connect_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    url = f"http://{connect_host}:{port}/"
+    deadline = time.monotonic() + timeout_seconds
+
+    print(f"[stack-check] waiting mock_openchat: {url}")
+    while time.monotonic() < deadline:
+        try:
+            with urlopen(url, timeout=2) as response:
+                if response.status == 200:
+                    print("[stack-check] mock_openchat health check passed")
+                    return
+        except URLError:
+            pass
+        except Exception:
+            pass
+        time.sleep(poll_interval_seconds)
+
+    raise RuntimeError(f"mock_openchat health check timeout after {timeout_seconds}s: {url}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run API + worker as one coordinated backend stack")
     parser.add_argument("--host", default="0.0.0.0", help="API host")
@@ -157,6 +265,14 @@ def main() -> None:
         default=0.5,
         help="Polling interval for API /healthz readiness check",
     )
+    parser.add_argument(
+        "--with-mock-openchat",
+        action="store_true",
+        help="Start mock_openchat together with API+worker, or attach if already running",
+    )
+    parser.add_argument("--mock-openchat-host", default="127.0.0.1", help="Mock openchat host")
+    parser.add_argument("--mock-openchat-port", type=int, default=8010, help="Mock openchat port")
+    parser.add_argument("--mock-openchat-reload", action="store_true", help="Enable mock_openchat reload mode")
     args = parser.parse_args()
 
     reload_enabled = not args.no_reload
@@ -168,6 +284,47 @@ def main() -> None:
 
     api_cmd = _build_api_cmd(host=args.host, port=args.port, reload_enabled=reload_enabled)
     worker_cmd = _build_worker_cmd(max_loops=args.worker_max_loops)
+
+    mock_proc: subprocess.Popen[bytes] | None = None
+    mock_managed = False
+
+    if args.with_mock_openchat:
+        mock_running = _is_tcp_port_open(args.mock_openchat_host, args.mock_openchat_port)
+        if mock_running:
+            pids = _find_listening_pids_for_port(args.mock_openchat_port)
+            if pids:
+                print(
+                    "[stack-mock] mock_openchat already running "
+                    f"host={args.mock_openchat_host} port={args.mock_openchat_port} pid={','.join(str(p) for p in pids)}"
+                )
+            else:
+                print(
+                    "[stack-mock] mock_openchat already running "
+                    f"host={args.mock_openchat_host} port={args.mock_openchat_port} pid=unknown"
+                )
+        else:
+            mock_cmd = _build_mock_openchat_cmd(
+                host=args.mock_openchat_host,
+                port=args.mock_openchat_port,
+                reload_enabled=args.mock_openchat_reload,
+            )
+            print(f"[stack-mock] starting mock_openchat command: {' '.join(mock_cmd)}")
+            mock_proc = subprocess.Popen(mock_cmd, env=env)
+            mock_managed = True
+            try:
+                _wait_mock_health(
+                    host=args.mock_openchat_host,
+                    port=args.mock_openchat_port,
+                    timeout_seconds=args.health_timeout_seconds,
+                    poll_interval_seconds=args.health_poll_interval_seconds,
+                )
+                print(
+                    "[stack-mock] mock_openchat started "
+                    f"host={args.mock_openchat_host} port={args.mock_openchat_port} pid={mock_proc.pid}"
+                )
+            except Exception:
+                _terminate(mock_proc, "mock_openchat")
+                raise
 
     required_provider = Provider(args.require_provider_ready) if args.require_provider_ready else None
     if not args.skip_checks:
@@ -206,6 +363,8 @@ def main() -> None:
         if worker_proc is not None:
             _terminate(worker_proc, "worker")
         _terminate(api_proc, "api")
+        if mock_proc is not None and mock_managed:
+            _terminate(mock_proc, "mock_openchat")
 
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -234,6 +393,8 @@ def main() -> None:
         if worker_proc is not None:
             _terminate(worker_proc, "worker")
         _terminate(api_proc, "api")
+        if mock_proc is not None and mock_managed:
+            _terminate(mock_proc, "mock_openchat")
 
     if exit_code != 0:
         raise SystemExit(exit_code)

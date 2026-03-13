@@ -28,27 +28,24 @@ const api = {
 		return this.request("/api/sessions/discover", { method: "POST" });
 	},
 
-	createSession(payload) {
-		return this.request("/api/sessions", { method: "POST", body: JSON.stringify(payload) });
-	},
-
-	updateSession(id, payload) {
-		return this.request(`/api/sessions/${encodeURIComponent(id)}`, {
-			method: "PUT",
-			body: JSON.stringify(payload),
-		});
-	},
-
-	deleteSession(id) {
-		return this.request(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
-	},
-
 	markLoginOk(id) {
 		return this.request(`/api/sessions/${encodeURIComponent(id)}/mark-login-ok`, { method: "POST" });
 	},
 
 	openSession(id) {
 		return this.request(`/api/sessions/${encodeURIComponent(id)}/open`, { method: "POST" });
+	},
+
+	rebuildSession(id) {
+		return this.request(`/api/sessions/${encodeURIComponent(id)}/rebuild`, { method: "POST" });
+	},
+
+	getSessionStats(id) {
+		return this.request(`/api/sessions/${encodeURIComponent(id)}/stats`);
+	},
+
+	probeHttpSession(id) {
+		return this.request(`/api/sessions/${encodeURIComponent(id)}/http-session`);
 	},
 
 	listErrors() {
@@ -59,29 +56,18 @@ const api = {
 const state = {
 	sessions: [],
 	filteredSessions: [],
-	selectedIds: new Set(),
+	openedWindows: new Map(),
 	filters: {
 		keyword: "",
 		provider: "all",
 		status: "all",
 		enabled: "all",
 	},
-	editingId: null,
 	toastTimer: null,
 };
 
 const nodes = {
-	form: document.getElementById("session-form"),
-	formTitle: document.getElementById("form-title"),
-	submitBtn: document.getElementById("submit-btn"),
-	resetBtn: document.getElementById("reset-form"),
 	refreshBtn: document.getElementById("refresh-btn"),
-	editingId: document.getElementById("editing-id"),
-	id: document.getElementById("session-id"),
-	provider: document.getElementById("provider"),
-	chatUrl: document.getElementById("chat-url"),
-	priority: document.getElementById("priority"),
-	enabled: document.getElementById("enabled"),
 	rows: document.getElementById("session-rows"),
 	countTotal: document.getElementById("count-total"),
 	countFiltered: document.getElementById("count-filtered"),
@@ -92,11 +78,6 @@ const nodes = {
 	filterState: document.getElementById("filter-state"),
 	filterEnabled: document.getElementById("filter-enabled"),
 	clearFilters: document.getElementById("clear-filters"),
-	selectedCount: document.getElementById("selected-count"),
-	selectFiltered: document.getElementById("select-filtered"),
-	clearSelection: document.getElementById("clear-selection"),
-	batchEnable: document.getElementById("batch-enable"),
-	batchDisable: document.getElementById("batch-disable"),
 	errorSummary: document.getElementById("error-summary"),
 	errorRows: document.getElementById("error-rows"),
 	refreshErrors: document.getElementById("refresh-errors"),
@@ -112,32 +93,6 @@ function showToast(message) {
 	}, 2200);
 }
 
-function resetForm() {
-	state.editingId = null;
-	nodes.editingId.value = "";
-	nodes.id.value = "";
-	nodes.provider.value = "openchat";
-	nodes.chatUrl.value = "";
-	nodes.priority.value = "100";
-	nodes.enabled.checked = true;
-	nodes.id.disabled = false;
-	nodes.formTitle.textContent = "Create Session";
-	nodes.submitBtn.textContent = "Create";
-}
-
-function fillFormForEdit(session) {
-	state.editingId = session.id;
-	nodes.editingId.value = session.id;
-	nodes.id.value = session.id;
-	nodes.provider.value = session.provider;
-	nodes.chatUrl.value = session.chat_url;
-	nodes.priority.value = String(session.priority);
-	nodes.enabled.checked = !!session.enabled;
-	nodes.id.disabled = true;
-	nodes.formTitle.textContent = `Edit Session: ${session.id}`;
-	nodes.submitBtn.textContent = "Update";
-}
-
 function stateBadgeClass(sessionState) {
 	if (sessionState === "READY") return "badge badge-ready";
 	if (sessionState === "WAIT_LOGIN") return "badge badge-wait";
@@ -149,23 +104,24 @@ function renderRows() {
 	nodes.rows.innerHTML = "";
 
 	for (const session of sessions) {
-		const isSelected = state.selectedIds.has(session.id);
 		const tr = document.createElement("tr");
 		tr.innerHTML = `
-      <td>
-        <input type="checkbox" data-select-id="${session.id}" ${isSelected ? "checked" : ""} />
-      </td>
       <td><strong>${session.id}</strong></td>
+		<td>${session.session_name || "-"}</td>
+		<td>${session.http_session_id || "-"}</td>
       <td>${session.provider}</td>
       <td><span class="${stateBadgeClass(session.state)}">${session.state}</span></td>
       <td>${session.login_state}</td>
+		<td>${session.start_time ? new Date(session.start_time).toLocaleString() : "-"}</td>
       <td>${session.priority}</td>
       <td>${session.enabled ? "yes" : "no"}</td>
       <td>${new Date(session.updated_at).toLocaleString()}</td>
       <td>
         <div class="row-actions">
-		  <button type="button" class="btn btn-mini btn-secondary" data-action="login-ok" data-id="${session.id}">Mark Ready</button>
-		  <button type="button" class="btn btn-mini btn-secondary" data-action="open" data-id="${session.id}">Open</button>
+		  <button type="button" class="btn btn-mini btn-secondary" data-action="stats" data-id="${session.id}">统计</button>
+		  <button type="button" class="btn btn-mini btn-secondary" data-action="probe" data-id="${session.id}">验证会话</button>
+		  <button type="button" class="btn btn-mini btn-secondary" data-action="login-ok" data-id="${session.id}">标记就绪</button>
+		  <button type="button" class="btn btn-mini btn-secondary" data-action="open" data-id="${session.id}">打开页面</button>
         </div>
       </td>
     `;
@@ -178,7 +134,6 @@ function renderRows() {
 	nodes.countFiltered.textContent = `Filtered: ${sessions.length}`;
 	nodes.countEnabled.textContent = `Enabled: ${enabledCount}`;
 	nodes.countWaitLogin.textContent = `Wait login: ${waitLoginCount}`;
-	nodes.selectedCount.textContent = `Selected: ${state.selectedIds.size}`;
 }
 
 function applyFilters() {
@@ -203,8 +158,6 @@ function applyFilters() {
 		return haystack.includes(keyword);
 	});
 
-	const visibleIds = new Set(state.filteredSessions.map((row) => row.id));
-	state.selectedIds = new Set([...state.selectedIds].filter((id) => visibleIds.has(id)));
 	renderRows();
 }
 
@@ -226,7 +179,7 @@ async function reloadErrors() {
 	nodes.errorRows.innerHTML = "";
 
 	if (!items.length) {
-		nodes.errorSummary.innerHTML = '<p class="muted">No recent errors.</p>';
+		nodes.errorSummary.innerHTML = '<p class="muted">暂无错误。</p>';
 		return;
 	}
 
@@ -257,16 +210,6 @@ async function reloadErrors() {
 	}
 }
 
-function readFormPayload() {
-	return {
-		id: nodes.id.value.trim(),
-		provider: nodes.provider.value,
-		chat_url: nodes.chatUrl.value.trim(),
-		enabled: !!nodes.enabled.checked,
-		priority: Number(nodes.priority.value),
-	};
-}
-
 async function reloadSessions() {
 	state.sessions = await api.listSessions();
 	applyFilters();
@@ -277,32 +220,6 @@ async function discoverAndReloadSessions() {
 	await reloadSessions();
 }
 
-async function batchSetEnabled(enabled) {
-	const targets = state.sessions.filter((row) => state.selectedIds.has(row.id));
-	if (!targets.length) {
-		showToast("Select at least one session first.");
-		return;
-	}
-
-	for (const row of targets) {
-		if (row.enabled === enabled) continue;
-		await api.updateSession(row.id, {
-			provider: row.provider,
-			chat_url: row.chat_url,
-			enabled,
-			priority: row.priority,
-		});
-	}
-
-	showToast(`Batch ${enabled ? "enabled" : "disabled"}: ${targets.length}`);
-	await reloadSessions();
-}
-
-async function handleSubmit(event) {
-	event.preventDefault();
-	showToast("Manual create/update is disabled. Sessions are discovered from Provider settings.");
-}
-
 async function handleRowAction(event) {
 	const button = event.target.closest("button[data-action]");
 	if (!button) return;
@@ -311,57 +228,68 @@ async function handleRowAction(event) {
 	const id = button.dataset.id;
 	const row = state.sessions.find((s) => s.id === id);
 	if (!row) {
-		showToast(`Session not found: ${id}`);
+		showToast(`会话不存在: ${id}`);
 		return;
 	}
 
 	if (action === "login-ok") {
 		await api.markLoginOk(id);
-		showToast(`Session marked ready: ${id}`);
+		showToast(`已标记就绪: ${id}`);
+	}
+
+	if (action === "probe") {
+		const result = await api.probeHttpSession(id);
+		if (result?.tracked && result?.composed_session_id) {
+			showToast(`已跟踪: ${result.composed_session_id}`);
+		} else {
+			showToast("未跟踪到内部 HTTP session，请先通过程序内部浏览器打开并完成页面交互");
+		}
 	}
 
 	if (action === "open") {
 		const result = await api.openSession(id);
-		if (result && result.chat_url) {
-			window.open(result.chat_url, "_blank", "noopener,noreferrer");
+		if (result?.requires_rebuild_confirmation) {
+			const confirmed = window.confirm(
+				`${result.warning || "HTTP session changed."}\n\n是否删除并重建当前会话记录？`
+			);
+			if (confirmed) {
+				await api.rebuildSession(id);
+				showToast(`会话已重建: ${id}`);
+				await discoverAndReloadSessions();
+				return;
+			}
 		}
-		showToast(`Open link for: ${id}`);
+		if (result && result.chat_url) {
+			const existing = state.openedWindows.get(id);
+			if (existing && !existing.closed) {
+				existing.focus();
+			} else {
+				const opened = window.open(result.chat_url, "_blank", "noopener,noreferrer");
+				if (opened) {
+					state.openedWindows.set(id, opened);
+				}
+			}
+		}
+		showToast(`已打开会话页面: ${id}`);
+	}
+
+	if (action === "stats") {
+		const result = await api.getSessionStats(id);
+		showToast(result?.message || "统计功能待实现");
 	}
 
 	await reloadSessions();
 }
 
 async function init() {
-	nodes.form.addEventListener("submit", (event) => {
-		handleSubmit(event).catch((err) => showToast(err.message));
-	});
-
-	nodes.resetBtn.addEventListener("click", () => {
-		resetForm();
-		showToast("Manual form is disabled in discovery mode");
-	});
-
 	nodes.refreshBtn.addEventListener("click", () => {
 		Promise.all([discoverAndReloadSessions(), reloadErrors()])
-			.then(() => showToast("Discovered and refreshed"))
+			.then(() => showToast("发现并刷新完成"))
 			.catch((err) => showToast(err.message));
 	});
 
 	nodes.rows.addEventListener("click", (event) => {
 		handleRowAction(event).catch((err) => showToast(err.message));
-	});
-
-	nodes.rows.addEventListener("change", (event) => {
-		const checkbox = event.target.closest("input[data-select-id]");
-		if (!checkbox) return;
-		const id = checkbox.dataset.selectId;
-		if (!id) return;
-		if (checkbox.checked) {
-			state.selectedIds.add(id);
-		} else {
-			state.selectedIds.delete(id);
-		}
-		nodes.selectedCount.textContent = `Selected: ${state.selectedIds.size}`;
 	});
 
 	nodes.filterKeyword.addEventListener("input", (event) => {
@@ -382,45 +310,14 @@ async function init() {
 	});
 	nodes.clearFilters.addEventListener("click", () => {
 		clearFilters();
-		showToast("Filters cleared");
-	});
-
-	nodes.selectFiltered.addEventListener("click", () => {
-		for (const row of state.filteredSessions) {
-			state.selectedIds.add(row.id);
-		}
-		renderRows();
-		showToast(`Selected ${state.filteredSessions.length} sessions`);
-	});
-
-	nodes.clearSelection.addEventListener("click", () => {
-		state.selectedIds.clear();
-		renderRows();
-		showToast("Selection cleared");
-	});
-
-	nodes.batchEnable.addEventListener("click", () => {
-		showToast("Batch enable is disabled in discovery mode.");
-	});
-
-	nodes.batchDisable.addEventListener("click", () => {
-		showToast("Batch disable is disabled in discovery mode.");
+		showToast("筛选已清空");
 	});
 
 	nodes.refreshErrors.addEventListener("click", () => {
-		reloadErrors().then(() => showToast("Errors refreshed")).catch((err) => showToast(err.message));
+		reloadErrors().then(() => showToast("错误摘要已刷新")).catch((err) => showToast(err.message));
 	});
 
-	resetForm();
 	clearFilters();
-	const formPanel = document.querySelector('section[aria-label="Session form"]');
-	if (formPanel) {
-		formPanel.style.display = "none";
-	}
-	const batchBar = document.querySelector(".batch-bar");
-	if (batchBar) {
-		batchBar.style.display = "none";
-	}
 	const queryProvider = new URLSearchParams(window.location.search).get("provider");
 	if (queryProvider && [...nodes.filterProvider.options].some((opt) => opt.value === queryProvider)) {
 		state.filters.provider = queryProvider;

@@ -4,6 +4,7 @@ from src.storage.database import (
 	ProviderConfigORM,
 	RawResponseORM,
 	SessionORM,
+	SessionTrackingORM,
 	SystemLogORM,
 	SystemMetricHourlyORM,
 	TaskAttemptORM,
@@ -13,7 +14,13 @@ from src.storage.database import (
 	init_db,
 	session_scope,
 )
-from src.storage.repositories import AttemptRepository, ProviderConfigRepository, SessionRepository, TaskRepository
+from src.storage.repositories import (
+	AttemptRepository,
+	ProviderConfigRepository,
+	SessionRepository,
+	SessionTrackingRepository,
+	TaskRepository,
+)
 
 __all__ = [
 	"Base",
@@ -21,6 +28,7 @@ __all__ = [
 	"ProviderConfigORM",
 	"RawResponseORM",
 	"SessionORM",
+	"SessionTrackingORM",
 	"SystemLogORM",
 	"SystemMetricHourlyORM",
 	"TaskAttemptORM",
@@ -32,6 +40,7 @@ __all__ = [
 	"AttemptRepository",
 	"ProviderConfigRepository",
 	"SessionRepository",
+	"SessionTrackingRepository",
 	"TaskRepository",
 ]
 

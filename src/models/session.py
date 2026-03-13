@@ -47,6 +47,10 @@ class SessionStatus(BaseModel):
 
 class SessionRead(BaseModel):
     id: str
+    session_name: str
+    http_session_id: Optional[str] = None
+    start_time: datetime
+    status: str
     provider: Provider
     chat_url: str
     enabled: bool
@@ -56,3 +60,34 @@ class SessionRead(BaseModel):
     last_seen_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+
+class SessionHttpTrackingRead(BaseModel):
+    session_id: str
+    tracked: bool
+    source: str
+    cookie_name: str | None = None
+    composed_session_id: str | None = None
+    updated_at: datetime | None = None
+
+
+class SessionOpenRead(BaseModel):
+    session_id: str
+    chat_url: str
+    previous_http_session_id: str | None = None
+    current_http_session_id: str | None = None
+    requires_rebuild_confirmation: bool = False
+    warning: str | None = None
+
+
+class SessionRebuildRead(BaseModel):
+    old_session_id: str
+    rebuilt_session_id: str
+    message: str
+
+
+class SessionStatsRead(BaseModel):
+    session_id: str
+    implemented: bool
+    interaction_count: int | None = None
+    message: str

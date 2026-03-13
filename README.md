@@ -56,12 +56,17 @@ python -m scripts.run_stack --require-provider-ready openchat
 python -m scripts.run_stack --health-timeout-seconds 60
 python -m scripts.run_stack --health-poll-interval-seconds 1.0
 python -m scripts.run_stack --skip-checks
+python -m scripts.run_stack --with-mock-openchat
+python -m scripts.run_stack --with-mock-openchat --mock-openchat-port 8010
 
 说明：
 
 1. 在 dev 环境下，run_stack 默认会设置 WORKER_HEADLESS=0，浏览器会弹窗，便于人工登录。
 2. 若 worker 检测到会话未登录，会记录 session_login_required 日志并保持会话在 WAIT_LOGIN。
 3. 登录后请在 /admin/sessions 点击 Mark Login OK。
+4. `--with-mock-openchat` 启用时，run_stack 会先检查 mock_openchat 是否已运行：
+	1. 若已运行：记录运行状态和 PID，不重复启动。
+	2. 若未运行：自动启动并等待健康检查通过。
 
 6. 如需单独启动（调试排障时使用）
 

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+import logging
 from pathlib import Path
+from time import monotonic
 from typing import Callable
 
 from playwright.async_api import Page
 
 from src.browser.browser_controller import BrowserController
 from src.models.session import Provider
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,13 +32,20 @@ class BrowserSessionPool:
         storage_state_dir: str = "tmp/browser_state",
         profile_dir: str = "tmp/browser_profile",
         controller_factory: Callable[[], BrowserController] | None = None,
+        rebuild_warn_threshold: int = 3,
+        rebuild_warn_window_seconds: float = 90.0,
+        now_seconds: Callable[[], float] | None = None,
     ) -> None:
         self.headless = headless
         self.required_selector = required_selector
         self.storage_state_dir = Path(storage_state_dir)
         self.profile_dir = Path(profile_dir)
         self.controller_factory = controller_factory or BrowserController
+        self.rebuild_warn_threshold = max(1, rebuild_warn_threshold)
+        self.rebuild_warn_window_seconds = max(1.0, rebuild_warn_window_seconds)
+        self.now_seconds = now_seconds or monotonic
         self._entries: dict[str, _PoolEntry] = {}
+        self._rebuild_events: dict[str, deque[float]] = {}
 
     @staticmethod
     def _make_key(provider: str, session_id: str) -> str:
@@ -48,6 +61,12 @@ class BrowserSessionPool:
 
     async def get_page(self, session_id: str, url: str, provider: str = "openchat") -> Page:
         key = self._make_key(provider, session_id)
+        logger.debug(
+            "pool.get_page key=%s target_url=%s required_selector=%s",
+            key,
+            url,
+            self.required_selector,
+        )
         entry = self._entries.get(key)
         if entry is not None:
             healthy = await entry.controller.is_page_healthy(
@@ -55,15 +74,25 @@ class BrowserSessionPool:
                 required_selector=self.required_selector,
             )
             if healthy:
+                logger.debug("pool.get_page reuse key=%s current_url=%s", key, entry.url)
                 if entry.url != url:
+                    logger.info("pool.get_page navigate existing page key=%s from=%s to=%s", key, entry.url, url)
                     await entry.page.goto(url, wait_until="domcontentloaded")
                     entry.url = url
                 return entry.page
+            logger.warning("pool.get_page unhealthy existing entry; will close and recreate key=%s", key)
             await self._close_entry(key)
 
+        self._record_rebuild(key)
+        logger.info("pool.get_page creating new browser entry key=%s url=%s", key, url)
         controller = self.controller_factory()
         state_file = self._state_file(provider, session_id)
         user_data_dir = self._profile_dir(provider, session_id)
+        logger.debug(
+            "pool.get_page new entry state_file=%s user_data_dir=%s",
+            state_file,
+            user_data_dir,
+        )
         await controller.start(
             browser_type="chromium",
             headless=self.headless,
@@ -72,10 +101,29 @@ class BrowserSessionPool:
         )
         page = await controller.open_page(url)
         self._entries[key] = _PoolEntry(controller=controller, page=page, url=url)
+        logger.info("pool.get_page created key=%s opened_url=%s", key, page.url)
         return page
+
+    def _record_rebuild(self, key: str) -> None:
+        now = self.now_seconds()
+        events = self._rebuild_events.setdefault(key, deque())
+        while events and (now - events[0]) > self.rebuild_warn_window_seconds:
+            events.popleft()
+        events.append(now)
+
+        count = len(events)
+        if count > self.rebuild_warn_threshold:
+            logger.warning(
+                "pool.rebuild.alert key=%s rebuild_count=%s window_seconds=%s threshold=%s",
+                key,
+                count,
+                self.rebuild_warn_window_seconds,
+                self.rebuild_warn_threshold,
+            )
 
     async def reset_session(self, session_id: str, provider: str = "openchat") -> None:
         key = self._make_key(provider, session_id)
+        logger.warning("pool.reset_session key=%s", key)
         await self._close_entry(key)
 
     async def close_all(self) -> None:
@@ -85,14 +133,18 @@ class BrowserSessionPool:
     async def _close_entry(self, key: str) -> None:
         entry = self._entries.pop(key, None)
         if entry is None:
+            logger.debug("pool.close_entry skip missing key=%s", key)
             return
+        logger.info("pool.close_entry begin key=%s", key)
         try:
             provider, session_id = key.split(":", 1)
             state_file = self._state_file(provider, session_id)
             await entry.controller.save_storage_state(str(state_file))
-        except Exception:
-            pass
+            logger.debug("pool.close_entry saved storage state key=%s file=%s", key, state_file)
+        except Exception as exc:
+            logger.warning("pool.close_entry save state failed key=%s error=%s", key, exc)
         await entry.controller.close()
+        logger.info("pool.close_entry completed key=%s", key)
 
 
 class ProviderSessionPoolManager:

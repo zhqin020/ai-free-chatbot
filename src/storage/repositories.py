@@ -15,6 +15,7 @@ from src.storage.database import (
     ProviderConfigORM,
     RawResponseORM,
     SessionORM,
+    SessionTrackingORM,
     SystemLogORM,
     TaskAttemptORM,
     TaskORM,
@@ -318,6 +319,74 @@ class ProviderConfigRepository:
     def delete(self, name: str) -> bool:
         with session_scope() as session:
             row = session.get(ProviderConfigORM, name)
+            if row is None:
+                return False
+            session.delete(row)
+            return True
+
+
+class SessionTrackingRepository:
+    def upsert(
+        self,
+        *,
+        session_id: str,
+        session_name: str,
+        start_time: datetime,
+        status: str,
+        http_session_id: str | None = None,
+    ) -> SessionTrackingORM:
+        now = datetime.now(UTC)
+        with session_scope() as session:
+            row = session.get(SessionTrackingORM, session_id)
+            if row is None:
+                row = SessionTrackingORM(
+                    session_id=session_id,
+                    session_name=session_name,
+                    http_session_id=http_session_id,
+                    start_time=start_time,
+                    status=status,
+                    updated_at=now,
+                )
+                session.add(row)
+            else:
+                row.session_name = session_name
+                row.start_time = start_time
+                row.status = status
+                row.http_session_id = http_session_id
+                row.updated_at = now
+            session.flush()
+            session.refresh(row)
+            return row
+
+    def get(self, session_id: str) -> SessionTrackingORM | None:
+        with session_scope() as session:
+            return session.get(SessionTrackingORM, session_id)
+
+    def update_http_session(self, session_id: str, http_session_id: str | None) -> bool:
+        now = datetime.now(UTC)
+        with session_scope() as session:
+            row = session.get(SessionTrackingORM, session_id)
+            if row is None:
+                return False
+            row.http_session_id = http_session_id
+            row.updated_at = now
+            session.flush()
+            return True
+
+    def update_status(self, session_id: str, status: str) -> bool:
+        now = datetime.now(UTC)
+        with session_scope() as session:
+            row = session.get(SessionTrackingORM, session_id)
+            if row is None:
+                return False
+            row.status = status
+            row.updated_at = now
+            session.flush()
+            return True
+
+    def delete(self, session_id: str) -> bool:
+        with session_scope() as session:
+            row = session.get(SessionTrackingORM, session_id)
             if row is None:
                 return False
             session.delete(row)

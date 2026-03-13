@@ -54,6 +54,7 @@ class FakeBrowserType:
         self.launch_persistent_called = False
         self.last_launch_kwargs: dict | None = None
         self.last_persistent_kwargs: dict | None = None
+        self.persistent_error: Exception | None = None
 
     async def launch(self, **kwargs):
         self.launch_called = True
@@ -63,6 +64,8 @@ class FakeBrowserType:
     async def launch_persistent_context(self, **kwargs):
         self.launch_persistent_called = True
         self.last_persistent_kwargs = kwargs
+        if self.persistent_error is not None:
+            raise self.persistent_error
         return self.context
 
 
@@ -132,6 +135,40 @@ async def test_start_uses_persistent_profile_when_user_data_dir_provided(monkeyp
     await controller.close()
     assert browser_type.context.closed is True
     assert browser_type.browser.closed is False
+    assert manager.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_start_falls_back_when_persistent_profile_locked(monkeypatch, tmp_path: Path) -> None:
+    profile_dir = tmp_path / "profile"
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+
+    browser_type = FakeBrowserType()
+    browser_type.persistent_error = RuntimeError(
+        "BrowserType.launch_persistent_context: Target page, context or browser has been closed\n"
+        "[pid=1][out] Opening in existing browser session."
+    )
+    manager = FakePlaywrightManager(browser_type)
+    monkeypatch.setattr(
+        "src.browser.browser_controller.async_playwright",
+        lambda: FakeAsyncPlaywright(manager),
+    )
+
+    controller = BrowserController()
+    await controller.start(
+        user_data_dir=str(profile_dir),
+        storage_state_path=str(state_path),
+        headless=False,
+    )
+
+    assert browser_type.launch_persistent_called is True
+    assert browser_type.launch_called is True
+    assert browser_type.browser.last_storage_state == str(state_path)
+
+    await controller.close()
+    assert browser_type.context.closed is True
+    assert browser_type.browser.closed is True
     assert manager.stopped is True
 
 
