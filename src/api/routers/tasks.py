@@ -97,9 +97,10 @@ def get_task(task_id: str) -> TaskPollRead:
             detail=f"task not found: {task_id}",
         )
     payload = _build_task_payload(row)
-    # 动态判断所有 session 是否都 unhealthy 或无可用 provider
-    if _all_sessions_unhealthy_or_unavailable():
-        payload.status = "CRITICAL"
+    # 仅在任务未完成时，才根据 session 健康情况设置为 CRITICAL
+    if payload.status in ("PENDING", "DISPATCHED", "EXTRACTING"):
+        if _all_sessions_unhealthy_or_unavailable():
+            payload.status = "CRITICAL"
     return payload
 
 

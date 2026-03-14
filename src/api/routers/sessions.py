@@ -316,6 +316,7 @@ async def probe_http_session(session_id: str) -> SessionHttpTrackingRead:
 
 @router.post("/{session_id}/verify", response_model=SessionVerifyRead)
 async def verify_session(session_id: str) -> SessionVerifyRead:
+
     row = session_repo.get(session_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")

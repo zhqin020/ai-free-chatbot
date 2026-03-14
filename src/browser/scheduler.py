@@ -68,6 +68,7 @@ class WeightedRoundRobinScheduler:
             session_id=session_row.id,
             attempt_no=attempt_no,
         )
+        # 分配后立即更新 last_seen_at
         self.session_repo.update_state(session_row.id, SessionState.BUSY)
 
         return DispatchDecision(
@@ -154,19 +155,22 @@ class WeightedRoundRobinScheduler:
             return None
 
         mode = self.dispatch_config_repo.get_mode()
-        pool: list[SessionORM] = []
         if mode == "priority":
+            pool: list[SessionORM] = []
             for row in ready_sessions:
                 weight = max(1, 201 - min(200, row.priority))
                 pool.extend([row] * weight)
+            if not pool:
+                return None
+            idx = self._cursor % len(pool)
+            selected = pool[idx]
+            self._cursor = (self._cursor + 1) % len(pool)
+            return selected
         else:
-            # Round-robin mode ignores priority and rotates evenly among READY sessions.
-            pool = sorted(ready_sessions, key=lambda row: row.id)
-
-        if not pool:
-            return None
-
-        idx = self._cursor % len(pool)
-        selected = pool[idx]
-        self._cursor = (self._cursor + 1) % len(pool)
-        return selected
+            # 按 (last_seen_at, id) 升序排序，优先选择最久未服务的 session，若时间相同则按 id
+            def session_sort_key(s):
+                # last_seen_at 为空时，使用 created_at
+                t = s.last_seen_at or s.created_at
+                return (t, s.id)
+            sorted_sessions = sorted(ready_sessions, key=session_sort_key)
+            return sorted_sessions[0]

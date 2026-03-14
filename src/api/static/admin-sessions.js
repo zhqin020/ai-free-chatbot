@@ -117,15 +117,14 @@ function renderRows() {
       <td><span class="${stateBadgeClass(session.state)}">${session.state}</span></td>
       <td>${session.login_state}</td>
 		<td>${session.start_time ? new Date(session.start_time).toLocaleString() : "-"}</td>
-      <td>${session.priority}</td>
-      <td>${session.enabled ? "yes" : "no"}</td>
-      <td>${new Date(session.updated_at).toLocaleString()}</td>
+	<td>${session.priority}</td>
+	<td>${session.enabled ? "yes" : "no"}</td>
+	<td>${session.last_seen_at ? new Date(session.last_seen_at).toLocaleString() : "-"}</td>
       <td>
         <div class="row-actions">
 		  <button type="button" class="btn btn-mini btn-secondary" data-action="stats" data-id="${session.id}">统计</button>
 		  <button type="button" class="btn btn-mini btn-secondary" data-action="probe" data-id="${session.id}">验证会话</button>
 		  <button type="button" class="btn btn-mini btn-secondary" data-action="login-ok" data-id="${session.id}">标记就绪</button>
-		  <button type="button" class="btn btn-mini btn-secondary" data-action="open" data-id="${session.id}">打开页面</button>
         </div>
       </td>
     `;
@@ -242,36 +241,22 @@ async function handleRowAction(event) {
 	}
 
 	if (action === "probe") {
-		const result = await api.verifySession(id);
-		if (result?.deleted) {
-			showToast(`会话已删除: ${id}`);
-			await reloadSessions();
-			return;
-		}
-		if (result?.tracked && result?.composed_session_id) {
-			showToast(`会话有效（浏览器实时 cookie 一致）: ${result.composed_session_id}`);
-		} else {
-			showToast(result?.reason || "无法从浏览器读取实时 cookie，请人工确认登录状态");
-		}
-	}
-
-	if (action === "open") {
-		const result = await api.openSession(id);
-		if (result?.requires_rebuild_confirmation) {
-			const confirmed = window.confirm(
-				`${result.warning || "HTTP session changed."}\n\n是否删除并重建当前会话记录？`
-			);
-			if (confirmed) {
-				await api.rebuildSession(id);
-				showToast(`会话已重建: ${id}`);
-				await discoverAndReloadSessions();
+		// 禁用按钮防止重复点击
+		button.disabled = true;
+		try {
+			const result = await api.verifySession(id);
+			if (result?.deleted) {
+				showToast(`会话已删除: ${id}`);
+				await reloadSessions();
 				return;
 			}
-		}
-		if (result?.warning) {
-			showToast(`会话打开提示: ${result.warning}`);
-		} else {
-			showToast(`已在服务器浏览器打开会话页面: ${id}`);
+			if (result?.tracked && result?.composed_session_id) {
+				showToast(`会话有效（浏览器实时 cookie 一致）: ${result.composed_session_id}`);
+			} else {
+				showToast(result?.reason || "无法从浏览器读取实时 cookie，请人工确认登录状态");
+			}
+		} finally {
+			button.disabled = false;
 		}
 	}
 

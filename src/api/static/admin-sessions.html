@@ -4,7 +4,7 @@
 <head>
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Session Ready Console</title>
+	<title>Session Management Console</title>
 	<link rel="stylesheet" href="/ui/admin-shell.css" />
 	<link rel="stylesheet" href="/ui/admin-sessions.css" />
 	<script defer src="/ui/admin-sessions.js"></script>
@@ -30,7 +30,7 @@
 			<main class="shell">
 				<header class="hero">
 					<p class="kicker">AI OPS</p>
-					<h1>Session Management</h1>
+					<h1>Session Management Console</h1>
 					<p class="subtitle">自动发现 provider 会话、查看当前状态。会话验证仅以浏览器实时 cookie 为准（页面未开会自动拉起后读取）。
 					</p>
 				</header>
@@ -38,6 +38,7 @@
 				<section class="panel" aria-label="Session list">
 					<div class="panel-head">
 						<h2>会话状态</h2>
+						<button id="batch-enable-btn" type="button" class="btn btn-secondary">Batch Enable</button>
 						<button id="refresh-btn" type="button" class="btn btn-secondary">发现并刷新</button>
 						<div class="tiny-stats">
 							<span id="count-total">Total: 0</span>
@@ -99,8 +100,8 @@
 									<th>开始时间</th>
 									<th>Priority</th>
 									<th>启用</th>
-									<th>更新时间</th>
-									<th>操作（统计/验证/就绪/打开）</th>
+									<th>最后活动时间</th>
+									<th>操作（统计/验证/就绪）</th>
 								</tr>
 							</thead>
 							<tbody id="session-rows"></tbody>
@@ -111,6 +112,7 @@
 				<section class="panel" aria-label="Recent errors">
 					<div class="panel-head">
 						<h2>最近错误摘要</h2>
+						<div style="display:none">Recent Error Summary</div>
 						<button id="refresh-errors" type="button" class="btn btn-ghost">刷新错误</button>
 					</div>
 					<div id="error-summary" class="error-summary">
