@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -74,6 +75,12 @@ def create_app() -> FastAPI:
     @app.get("/admin/mock-openai", include_in_schema=False)
     def admin_mock_openai() -> FileResponse:
         return FileResponse(static_dir / "admin-mock-openai.html")
+
+
+
+    @app.get("/admin/auto-script-gen", include_in_schema=False)
+    def admin_auto_script_gen() -> FileResponse:
+        return FileResponse(static_dir / "admin-auto-script-gen.html")
 
     app.include_router(tasks_router)
     app.include_router(sessions_router)

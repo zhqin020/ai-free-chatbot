@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>自动脚本生成 - 管理后台</title>
+	<link rel="stylesheet" href="/ui/admin-shell.css" />
+	<style>
+		.container {
+			max-width: 900px;
+			margin: 32px auto;
+			background: #fff;
+			border-radius: 8px;
+			box-shadow: 0 2px 8px #0001;
+			padding: 32px;
+		}
+
+		h1 {
+			margin-top: 0;
+		}
+
+		.section {
+			margin-bottom: 32px;
+		}
+
+		label {
+			font-weight: bold;
+			display: block;
+			margin-bottom: 8px;
+		}
+
+		textarea,
+		input[type="text"] {
+			width: 100%;
+			font-size: 1em;
+			padding: 8px;
+			margin-bottom: 8px;
+			border-radius: 4px;
+			border: 1px solid #ccc;
+		}
+
+		textarea {
+			min-height: 60px;
+		}
+
+		pre {
+			background: #222;
+			color: #eee;
+			padding: 16px;
+			border-radius: 6px;
+			overflow-x: auto;
+			font-size: 0.95em;
+		}
+
+		button {
+			padding: 6px 16px;
+			border: none;
+			border-radius: 4px;
+			background: #409eff;
+			color: #fff;
+			cursor: pointer;
+			margin-top: 8px;
+		}
+
+		button:active {
+			background: #3076c9;
+		}
+	</style>
+</head>
+
+<body class="admin-shell-body">
+	<div class="admin-shell-layout">
+		<aside class="admin-sidebar" aria-label="主菜单">
+			<h2 class="brand">AI Ops</h2>
+			<p class="brand-sub">管理后台</p>
+			<nav class="admin-menu">
+				<a href="/admin">概览</a>
+				<a href="/admin/settings">Provider</a>
+				<a href="/admin/sessions">会话</a>
+				<a href="/admin/worker">Worker</a>
+				<a href="/admin/mock-openai">Mock OpenAI</a>
+				<a href="/admin/test-extract">测试提取</a>
+				<a href="/admin/query">查询</a>
+				<a class="active" href="/admin/auto-script-gen">自动脚本生成</a>
+			</nav>
+		</aside>
+		<div class="admin-content">
+			<main class="page">
+				<header class="hero">
+					<p class="eyebrow">AI CHAT OPS</p>
+					<h1>自动脚本生成</h1>
+					<p class="lead">根据输入 prompt 和 JSON 模板自动生成 Python 脚本函数。</p>
+				</header>
+				<div class="container">
+					<div class="section">
+						<label for="prompt">Prompt（提取指令）</label>
+						<textarea id="prompt" placeholder="请输入提取指令...">请提取案件状态、判决结果和关键时间节点为 JSON。</textarea>
+					</div>
+					<div class="section">
+						<label for="ret_json">目标 JSON 模板</label>
+						<textarea id="ret_json" placeholder="可直接粘贴/编辑 JSON 字符串...">{
+  "case_id": "IMM-####-##(from document)",
+  "case_type": "Mandamus|Other",
+  "case_status": "Closed|On-Going",
+  "judgment_result": "leave|grant|dismiss",
+  "hearing": "true|false",
+  "timeline": {
+    "filing_date": "YYYY-MM-DD",
+    "Applicant_file_completed": "YYYY-MM-DD",
+    "reply_memo": "YYYY-MM-DD",
+    "Sent_to_Court": "YYYY-MM-DD",
+    "judgment_date": "YYYY-MM-DD"
+  }
+}</textarea>
+					</div>
+					<div class="section">
+						<label>生成的 Python 函数代码</label>
+						<pre id="code"></pre>
+						<button onclick="copyCode()">一键复制</button>
+					</div>
+					<div class="section">
+						<button onclick="saveContent()">保存</button>
+					</div>
+				</div>
+			</main>
+		</div>
+	</div>
+	<script>
+		function escapeForTripleQuotes(str) {
+			return str.replace(/'''/g, "'''");
+		}
+		function updateCode() {
+			const prompt = document.getElementById('prompt').value.trim();
+			const ret_json = document.getElementById('ret_json').value.trim();
+			const code = `def make_chat_request_payload(document_text: str, msg_id_prefix: str):\n    """\n    自动生成的请求 payload 构造函数。\n    :param document_text: 文本内容\n    :param msg_id_prefix: 消息 ID 前缀\n    :return: dict\n    """\n    import time\n    if not hasattr(make_chat_request_payload, "count"):\n        make_chat_request_payload.count = 1\n    make_chat_request_payload.count += 1\n\n    ret_json = '''${escapeForTripleQuotes(ret_json)}'''\n    prompt = f"""${prompt}"""\n    return {\n        "external_id": f"{msg_id_prefix}-{int(time.time())}-{make_chat_request_payload.count}",\n        "prompt": prompt,\n        "document_text": document_text\n    }`;
+			document.getElementById('code').textContent = code;
+		}
+		function copyCode() {
+			const code = document.getElementById('code').textContent;
+			navigator.clipboard.writeText(code).then(() => {
+				alert('已复制到剪贴板！');
+			});
+		}
+		function saveContent() {
+			const prompt = document.getElementById('prompt').value;
+			const ret_json = document.getElementById('ret_json').value;
+			localStorage.setItem('auto_script_gen_prompt', prompt);
+			localStorage.setItem('auto_script_gen_ret_json', ret_json);
+			alert('已保存！');
+		}
+		function loadContent() {
+			const prompt = localStorage.getItem('auto_script_gen_prompt');
+			const ret_json = localStorage.getItem('auto_script_gen_ret_json');
+			document.getElementById('prompt').value = prompt || '请提取案件状态、判决结果和关键时间节点为 JSON。';
+			document.getElementById('ret_json').value = ret_json || `{
+  "case_id": "IMM-####-##(from document)",
+  "case_type": "Mandamus|Other",
+  "case_status": "Closed|On-Going",
+  "judgment_result": "leave|grant|dismiss",
+  "hearing": "true|false",
+  "timeline": {
+    "filing_date": "YYYY-MM-DD",
+    "Applicant_file_completed": "YYYY-MM-DD",
+    "reply_memo": "YYYY-MM-DD",
+    "Sent_to_Court": "YYYY-MM-DD",
+    "judgment_date": "YYYY-MM-DD"
+  }
+}`;
+		}
+		document.getElementById('prompt').addEventListener('input', updateCode);
+		document.getElementById('ret_json').addEventListener('input', updateCode);
+		window.onload = function() {
+			loadContent();
+			updateCode();
+		};
+	</script>
+</body>
+
+</html>

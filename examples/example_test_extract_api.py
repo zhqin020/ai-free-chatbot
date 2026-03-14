@@ -131,7 +131,41 @@ def _check_sessions_ready(client: ApiClient) -> bool:
         print(f"  id={row.get('id')} provider={row.get('provider')} state={row.get('state')} login_state={row.get('login_state')}")
     return False
 
+def make_chat_request_payload(document_text: str, msg_id_prefix: str):
+    request_payload = None
+    
+     # 如果属性不存在，则初始化
+    if not hasattr(make_chat_request_payload, "count"):
+        make_chat_request_payload.count = 1
 
+    make_chat_request_payload.count += 1
+    
+    ret_json = '''{
+    "case_id": "IMM-####-##(from document)",
+    "case_type": "Mandamus|Other",
+    "case_status": "Closed|On-Going",
+    "judgment_result": "leave|grant|dismiss",
+    "hearing": "true|false",
+    "timeline": {
+        "filing_date": "YYYY-MM-DD",
+        "Applicant_file_completed": "YYYY-MM-DD",
+        "reply_memo": "YYYY-MM-DD",
+        "Sent_to_Court": "YYYY-MM-DD",
+        "judgment_date": "YYYY-MM-DD"
+    }
+    }'''
+
+    prompt = f"Extract legal status, judgment result, and key timeline nodes as JSON. the JSON should have the format {ret_json}, and the json is only result of the response no any other additional information. If any of the fields cannot be extracted, please set it to null or empty."
+
+    request_payload={
+                "external_id": f"{msg_id_prefix}-{int(time.time())}-{make_chat_request_payload.count}",
+                "prompt": prompt,
+                "document_text": document_text
+            }
+    
+    return request_payload
+
+    
 def main() -> None:
     args = _parse_args()
     client = ApiClient(base_url=args.base_url)
@@ -143,22 +177,10 @@ def main() -> None:
     # 连续多次请求
     N = 5
     results = []
-    ret_json = '''{
-  "case_id": "string",
-  "case_status": "Closed|On-Going",
-  "judgment_result": "leave|grant|dismiss",
-  "hearing": "true|false",
-  "timeline": {
-    "filing_date": "YYYY-MM-DD",
-    "Applicant_file_completed": "YYYY-MM-DD",
-	"reply_memo": "YYYY-MM-DD",
-	"Sent_to_Court": "YYYY-MM-DD",
-    "judgment_date": "YYYY-MM-DD"
-  }
-}'''
+     
     for i in range(N):
         print(f"\n===== Run {i+1} =====")
-        prompt = f"Extract legal status, judgment result, and key timeline nodes as JSON. the JSON should have the format {ret_json}, and the json is only result of the response no any other additional information. If any of the fields cannot be extracted, please set it to null or empty."
+         
         
         document_text = '''
 {
@@ -206,13 +228,11 @@ def main() -> None:
   ]
 }
         '''
+
+        request_payload = make_chat_request_payload(document_text = document_text, msg_id_prefix=f"e2e-openchat")
         created = client.post(
             "/api/tasks",
-            json={
-                "external_id": f"e2e-openchat-{int(time.time())}-{i}",
-                "prompt": prompt,
-                "document_text": document_text,
-            },
+            json=request_payload,
         )
         task_id = created["id"]
         pretty_print("task created", created)
