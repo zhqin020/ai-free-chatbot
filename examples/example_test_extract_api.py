@@ -117,30 +117,8 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _check_sessions_ready(client: ApiClient) -> bool:
-    sessions = client.get("/api/sessions", params={"enabled_only": True})
-    provider_ready = {"openchat": False, "deepseek": False}
-    for row in sessions:
-        if row.get("provider") in provider_ready and row.get("state") == "READY":
-            provider_ready[row["provider"]] = True
-    if all(provider_ready.values()):
-        print("[INFO] openchat 和 deepseek 会话均为 READY，开始测试。")
-        return True
-    print("[WARN] openchat/deepseek 会话未全部 READY，当前状态：")
-    for row in sessions:
-        print(f"  id={row.get('id')} provider={row.get('provider')} state={row.get('state')} login_state={row.get('login_state')}")
-    return False
 
-def make_chat_request_payload(document_text: str, msg_id_prefix: str):
-    request_payload = None
-    
-     # 如果属性不存在，则初始化
-    if not hasattr(make_chat_request_payload, "count"):
-        make_chat_request_payload.count = 1
-
-    make_chat_request_payload.count += 1
-    
-    ret_json = '''{
+ret_json = '''{
     "case_id": "IMM-####-##(from document)",
     "case_type": "Mandamus|Other",
     "case_status": "Closed|On-Going",
@@ -155,34 +133,7 @@ def make_chat_request_payload(document_text: str, msg_id_prefix: str):
     }
     }'''
 
-    prompt = f"Extract legal status, judgment result, and key timeline nodes as JSON. the JSON should have the format {ret_json}, and the json is only result of the response no any other additional information. If any of the fields cannot be extracted, please set it to null or empty."
-
-    request_payload={
-                "external_id": f"{msg_id_prefix}-{int(time.time())}-{make_chat_request_payload.count}",
-                "prompt": prompt,
-                "document_text": document_text
-            }
-    
-    return request_payload
-
-    
-def main() -> None:
-    args = _parse_args()
-    client = ApiClient(base_url=args.base_url)
-
-    if not _check_sessions_ready(client):
-        print("[ABORT] 会话未全部 READY，终止测试。")
-        return
-
-    # 连续多次请求
-    N = 5
-    results = []
-     
-    for i in range(N):
-        print(f"\n===== Run {i+1} =====")
-         
-        
-        document_text = '''
+document_text = '''
 {
   "case_id": "IMM-1-24",
   "case_number": "IMM-1-24",
@@ -229,7 +180,31 @@ def main() -> None:
 }
         '''
 
-        request_payload = make_chat_request_payload(document_text = document_text, msg_id_prefix=f"e2e-openchat")
+prompt_templ = f"Extract legal status, judgment result, and key timeline nodes as JSON. the JSON should have the format <ret_json_template>, and the json is the only result of the response no any other additional information. If any of the fields cannot be extracted, please set it to null or empty.\n the document text is:\n"
+
+    
+def main() -> None:
+    args = _parse_args()
+    client = ApiClient(base_url=args.base_url)
+
+    # 客户端无需检查会话状态，直接发送请求
+
+    # 连续多次请求
+    N = 3
+    results = []
+     
+    for i in range(N):
+        print(f"\n===== Run {i+1} =====")
+         
+        
+        
+        #request_payload = ApiClient.make_chat_request_payload(document_text=document_text, msg_id_prefix=f"e2e-openchat")
+        request_payload = ApiClient.make_chat_request_payload_v2(
+            prompt_template=prompt_templ,
+            ret_json_template=ret_json,
+            document_text=document_text,
+            msg_id_prefix=f"e2e-openchat"
+        )
         created = client.post(
             "/api/tasks",
             json=request_payload,
