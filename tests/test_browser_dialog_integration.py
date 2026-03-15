@@ -8,10 +8,11 @@ from typing import Any
 
 import pytest
 
+
 from src.browser.scheduler import DispatchDecision
 from src.browser.worker import PooledProviderTaskProcessor
 from src.config import reset_settings_cache
-from src.models.session import Provider, SessionConfig, SessionState
+from src.models.session import SessionConfig, SessionState
 from src.models.task import TaskCreate
 from src.storage.database import init_db
 from src.storage.repositories import SessionRepository, TaskRepository
@@ -127,7 +128,7 @@ def _prepare_task_and_session(db_name: str) -> tuple[str, str]:
     session = SessionRepository().upsert(
         SessionConfig(
             id="s-openchat-it",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -137,7 +138,7 @@ def _prepare_task_and_session(db_name: str) -> tuple[str, str]:
         TaskCreate(
             prompt="请提取结构化字段",
             document_text="这里是文书正文",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
     return session.id, task.id
@@ -152,7 +153,7 @@ async def test_processor_marks_wait_login_when_human_verification_detected() -> 
     adapter = FakeAdapter(logged_in=False)
 
     processor = PooledProviderTaskProcessor(
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         adapter=adapter,
         session_pool=pool,
     )
@@ -161,7 +162,7 @@ async def test_processor_marks_wait_login_when_human_verification_detected() -> 
         DispatchDecision(
             task_id=task_id,
             session_id=session_id,
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             attempt_id=1,
             attempt_no=1,
             dispatched_at=datetime.now(UTC),
@@ -188,7 +189,7 @@ async def test_processor_enters_dialog_and_returns_response_when_logged_in() -> 
     adapter = FakeAdapter(logged_in=True, response="{\"ok\": true}")
 
     processor = PooledProviderTaskProcessor(
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         adapter=adapter,
         session_pool=pool,
     )
@@ -197,7 +198,7 @@ async def test_processor_enters_dialog_and_returns_response_when_logged_in() -> 
         DispatchDecision(
             task_id=task_id,
             session_id=session_id,
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             attempt_id=1,
             attempt_no=1,
             dispatched_at=datetime.now(UTC),
@@ -234,7 +235,7 @@ async def test_processor_marks_wait_login_when_cookie_consent_required() -> None
     )
 
     processor = PooledProviderTaskProcessor(
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         adapter=adapter,
         session_pool=pool,
     )
@@ -243,7 +244,7 @@ async def test_processor_marks_wait_login_when_cookie_consent_required() -> None
         DispatchDecision(
             task_id=task_id,
             session_id=session_id,
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             attempt_id=1,
             attempt_no=1,
             dispatched_at=datetime.now(UTC),
@@ -279,7 +280,7 @@ async def test_processor_uses_page_state_chat_ready_even_if_logged_in_check_fals
     )
 
     processor = PooledProviderTaskProcessor(
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         adapter=adapter,
         session_pool=pool,
     )
@@ -288,7 +289,7 @@ async def test_processor_uses_page_state_chat_ready_even_if_logged_in_check_fals
         DispatchDecision(
             task_id=task_id,
             session_id=session_id,
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             attempt_id=1,
             attempt_no=1,
             dispatched_at=datetime.now(UTC),
@@ -312,7 +313,7 @@ async def test_processor_does_not_reset_session_for_chat_not_ready_exception() -
     )
 
     processor = PooledProviderTaskProcessor(
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         adapter=adapter,
         session_pool=pool,
     )
@@ -321,7 +322,7 @@ async def test_processor_does_not_reset_session_for_chat_not_ready_exception() -
         DispatchDecision(
             task_id=task_id,
             session_id=session_id,
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             attempt_id=1,
             attempt_no=1,
             dispatched_at=datetime.now(UTC),

@@ -38,12 +38,10 @@
 				<section class="panel" aria-label="Session list">
 					<div class="panel-head">
 						<h2>会话状态</h2>
-						<button id="batch-enable-btn" type="button" class="btn btn-secondary">Batch Enable</button>
 						<button id="refresh-btn" type="button" class="btn btn-secondary">发现并刷新</button>
 						<div class="tiny-stats">
 							<span id="count-total">Total: 0</span>
 							<span id="count-filtered">Filtered: 0</span>
-							<span id="count-enabled">Enabled: 0</span>
 							<span id="count-wait-login">Wait login: 0</span>
 						</div>
 					</div>
@@ -52,16 +50,6 @@
 						<label>
 							搜索
 							<input id="filter-keyword" placeholder="id, provider, login state" />
-						</label>
-						<label>
-							Provider
-							<select id="filter-provider">
-								<option value="all">all</option>
-								<option value="openchat">openchat</option>
-								<option value="gemini">gemini</option>
-								<option value="grok">grok</option>
-								<option value="deepseek">deepseek</option>
-							</select>
 						</label>
 						<label>
 							状态
@@ -74,14 +62,6 @@
 								<option value="RECOVERING">RECOVERING</option>
 							</select>
 						</label>
-						<label>
-							启用
-							<select id="filter-enabled">
-								<option value="all">all</option>
-								<option value="yes">yes</option>
-								<option value="no">no</option>
-							</select>
-						</label>
 						<div class="filter-actions">
 							<button id="clear-filters" type="button" class="btn btn-ghost">清空筛选</button>
 						</div>
@@ -92,14 +72,11 @@
 							<thead>
 								<tr>
 									<th>ID</th>
-									<th>Session Name</th>
 									<th>HTTP Session</th>
 									<th>Provider</th>
 									<th>状态</th>
 									<th>登录状态</th>
 									<th>开始时间</th>
-									<th>Priority</th>
-									<th>启用</th>
 									<th>最后活动时间</th>
 									<th>操作（统计/验证/就绪）</th>
 								</tr>

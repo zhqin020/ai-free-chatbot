@@ -10,7 +10,7 @@ from src.browser.scheduler import DispatchDecision
 from src.browser.session_registry import SessionRegistry
 from src.browser.worker import OpenChatTaskProcessor, ProcessResult, SchedulerWorker, TaskProcessor
 from src.config import reset_settings_cache
-from src.models.session import Provider, SessionConfig
+from src.models.session import SessionConfig
 from src.models.task import TaskCreate, TaskStatus
 from src.storage.database import init_db
 from src.storage.repositories import TaskRepository

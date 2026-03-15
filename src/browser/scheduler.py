@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Optional
 
-from src.models.session import Provider, SessionState
+from src.models.session import SessionState
 from src.models.task import TaskStatus
 from src.storage.database import SessionORM
 from src.storage.repositories import (
@@ -19,7 +19,7 @@ from src.storage.repositories import (
 class DispatchDecision:
     task_id: str
     session_id: str
-    provider: Provider
+    provider: str
     attempt_id: int
     attempt_no: int
     dispatched_at: datetime
@@ -142,7 +142,7 @@ class WeightedRoundRobinScheduler:
             self.session_repo.update_state(session_id, SessionState.READY)
 
     def _pick_next_ready_session(self) -> Optional[SessionORM]:
-        all_sessions = self.session_repo.list(enabled_only=True)
+        all_sessions = self.session_repo.list()
         if not all_sessions:
             return None
 

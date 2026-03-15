@@ -21,7 +21,7 @@ const api = {
 	},
 
 	listSessions() {
-		return this.request("/api/sessions?enabled_only=true");
+		return this.request("/api/sessions");
 	},
 
 	discoverSessions() {
@@ -63,9 +63,7 @@ const state = {
 	openedWindows: new Map(),
 	filters: {
 		keyword: "",
-		provider: "all",
 		status: "all",
-		enabled: "all",
 	},
 	toastTimer: null,
 };
@@ -75,12 +73,9 @@ const nodes = {
 	rows: document.getElementById("session-rows"),
 	countTotal: document.getElementById("count-total"),
 	countFiltered: document.getElementById("count-filtered"),
-	countEnabled: document.getElementById("count-enabled"),
 	countWaitLogin: document.getElementById("count-wait-login"),
 	filterKeyword: document.getElementById("filter-keyword"),
-	filterProvider: document.getElementById("filter-provider"),
 	filterState: document.getElementById("filter-state"),
-	filterEnabled: document.getElementById("filter-enabled"),
 	clearFilters: document.getElementById("clear-filters"),
 	errorSummary: document.getElementById("error-summary"),
 	errorRows: document.getElementById("error-rows"),
@@ -110,48 +105,34 @@ function renderRows() {
 	for (const session of sessions) {
 		const tr = document.createElement("tr");
 		tr.innerHTML = `
-      <td><strong>${session.id}</strong></td>
-		<td>${session.session_name || "-"}</td>
-		<td>${session.http_session_id || "-"}</td>
-      <td>${session.provider}</td>
-      <td><span class="${stateBadgeClass(session.state)}">${session.state}</span></td>
-      <td>${session.login_state}</td>
-		<td>${session.start_time ? new Date(session.start_time).toLocaleString() : "-"}</td>
-	<td>${session.priority}</td>
-	<td>${session.enabled ? "yes" : "no"}</td>
-	<td>${session.last_seen_at ? new Date(session.last_seen_at).toLocaleString() : "-"}</td>
-      <td>
-        <div class="row-actions">
-		  <button type="button" class="btn btn-mini btn-secondary" data-action="stats" data-id="${session.id}">统计</button>
-		  <button type="button" class="btn btn-mini btn-secondary" data-action="probe" data-id="${session.id}">验证会话</button>
-		  <button type="button" class="btn btn-mini btn-secondary" data-action="login-ok" data-id="${session.id}">标记就绪</button>
-        </div>
-      </td>
-    `;
+			<td><strong>${session.id}</strong></td>
+			<td>${session.http_session_id || "-"}</td>
+			<td>${session.provider}</td>
+			<td><span class="${stateBadgeClass(session.state)}">${session.state}</span></td>
+			<td>${session.login_state}</td>
+			<td>${session.last_seen_at ? new Date(session.last_seen_at).toLocaleString() : "-"}</td>
+			<td>${session.created_at ? new Date(session.created_at).toLocaleString() : "-"}</td>
+			<td>
+				<div class="row-actions">
+					<button type="button" class="btn btn-mini btn-secondary" data-action="stats" data-id="${session.id}">统计</button>
+					<button type="button" class="btn btn-mini btn-secondary" data-action="probe" data-id="${session.id}">验证会话</button>
+					<button type="button" class="btn btn-mini btn-secondary" data-action="login-ok" data-id="${session.id}">标记就绪</button>
+				</div>
+			</td>
+		`;
 		nodes.rows.appendChild(tr);
 	}
 
-	const enabledCount = sessions.filter((s) => s.enabled).length;
 	const waitLoginCount = sessions.filter((s) => s.state === "WAIT_LOGIN").length;
 	nodes.countTotal.textContent = `Total: ${state.sessions.length}`;
 	nodes.countFiltered.textContent = `Filtered: ${sessions.length}`;
-	nodes.countEnabled.textContent = `Enabled: ${enabledCount}`;
 	nodes.countWaitLogin.textContent = `Wait login: ${waitLoginCount}`;
 }
 
 function applyFilters() {
 	const keyword = state.filters.keyword.trim().toLowerCase();
 	state.filteredSessions = state.sessions.filter((session) => {
-		if (state.filters.provider !== "all" && session.provider !== state.filters.provider) {
-			return false;
-		}
 		if (state.filters.status !== "all" && session.state !== state.filters.status) {
-			return false;
-		}
-		if (state.filters.enabled === "yes" && !session.enabled) {
-			return false;
-		}
-		if (state.filters.enabled === "no" && session.enabled) {
 			return false;
 		}
 		if (!keyword) {
@@ -166,13 +147,9 @@ function applyFilters() {
 
 function clearFilters() {
 	state.filters.keyword = "";
-	state.filters.provider = "all";
 	state.filters.status = "all";
-	state.filters.enabled = "all";
 	nodes.filterKeyword.value = "";
-	nodes.filterProvider.value = "all";
 	nodes.filterState.value = "all";
-	nodes.filterEnabled.value = "all";
 	applyFilters();
 }
 
@@ -283,18 +260,12 @@ async function init() {
 		state.filters.keyword = event.target.value || "";
 		applyFilters();
 	});
-	nodes.filterProvider.addEventListener("change", (event) => {
-		state.filters.provider = event.target.value;
-		applyFilters();
-	});
+	// 已移除 provider 相关逻辑
 	nodes.filterState.addEventListener("change", (event) => {
 		state.filters.status = event.target.value;
 		applyFilters();
 	});
-	nodes.filterEnabled.addEventListener("change", (event) => {
-		state.filters.enabled = event.target.value;
-		applyFilters();
-	});
+	// 已移除 enabled 相关逻辑
 	nodes.clearFilters.addEventListener("click", () => {
 		clearFilters();
 		showToast("筛选已清空");

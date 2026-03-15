@@ -7,7 +7,7 @@ import pytest
 from src.browser.scheduler import DispatchDecision
 from src.browser.session_pool import ProviderSessionPoolManager
 from src.browser.worker import MultiProviderTaskProcessor, ProcessResult, TaskProcessor
-from src.models.session import Provider
+
 
 
 class FakeProcessor(TaskProcessor):
@@ -23,11 +23,11 @@ class FakeProcessor(TaskProcessor):
 
 def test_provider_pool_manager_creates_dedicated_pools() -> None:
     manager = ProviderSessionPoolManager(headless=True)
-    openchat_pool = manager.get_pool(Provider.OPENCHAT)
-    gemini_pool = manager.get_pool(Provider.GEMINI)
+    openchat_pool = manager.get_pool("openchat")
+    gemini_pool = manager.get_pool("gemini")
 
     assert openchat_pool is not gemini_pool
-    assert manager.get_pool(Provider.OPENCHAT) is openchat_pool
+    assert manager.get_pool("openchat") is openchat_pool
 
 
 @pytest.mark.asyncio
@@ -36,8 +36,8 @@ async def test_multi_provider_processor_routes_by_provider() -> None:
     gemini = FakeProcessor("gemini")
     processor = MultiProviderTaskProcessor(
         processors={
-            Provider.OPENCHAT: openchat,
-            Provider.GEMINI: gemini,
+            "openchat": openchat,
+            "gemini": gemini,
         }
     )
 
@@ -45,7 +45,7 @@ async def test_multi_provider_processor_routes_by_provider() -> None:
         DispatchDecision(
             task_id="t1",
             session_id="s1",
-            provider=Provider.GEMINI,
+            provider="gemini",
             attempt_id=1,
             attempt_no=1,
             dispatched_at=datetime.now(UTC),

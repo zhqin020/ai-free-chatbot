@@ -7,11 +7,6 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
-class Provider(str, Enum):
-    OPENCHAT = "openchat"
-    GEMINI = "gemini"
-    GROK = "grok"
-    DEEPSEEK = "deepseek"
 
 
 class SessionState(str, Enum):
@@ -24,37 +19,27 @@ class SessionState(str, Enum):
 
 class SessionConfig(BaseModel):
     id: str = Field(min_length=1)
-    provider: Provider
+    provider: str
     chat_url: str = Field(min_length=1)
-    enabled: bool = True
-    priority: int = 100
 
 
 class SessionUpdate(BaseModel):
-    provider: Provider
+    provider: str
     chat_url: str = Field(min_length=1)
-    enabled: bool = True
-    priority: int = 100
 
 
 class SessionStatus(BaseModel):
     id: str
     state: SessionState
-    enabled: bool = True
     login_state: str = "unknown"
     last_seen_at: Optional[datetime] = None
 
 
 class SessionRead(BaseModel):
     id: str
-    session_name: str
     http_session_id: Optional[str] = None
-    start_time: datetime
-    status: str
-    provider: Provider
+    provider: str
     chat_url: str
-    enabled: bool
-    priority: int
     state: SessionState
     login_state: str
     last_seen_at: Optional[datetime] = None

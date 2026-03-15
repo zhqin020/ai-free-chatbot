@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from src.browser.session_registry import SessionRegistry
 from src.browser.worker import MockTaskProcessor, SchedulerWorker
 from src.config import reset_settings_cache
-from src.models.session import Provider, SessionConfig
+from src.models.session import SessionConfig
 from src.storage.database import init_db
 from src.storage.repositories import TaskRepository
 

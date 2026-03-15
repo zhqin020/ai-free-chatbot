@@ -36,9 +36,22 @@ def create_app() -> FastAPI:
     )
     static_dir = Path(__file__).resolve().parent / "static"
 
+    import threading
+    import asyncio
+    from src.browser.worker import SchedulerWorker
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         init_db()
+        # 启动 worker 主循环（后台线程，API/worker 合并进程）
+        def worker_thread():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            worker = SchedulerWorker()
+            loop.run_until_complete(worker.run_forever())
+
+        t = threading.Thread(target=worker_thread, name="WorkerThread", daemon=True)
+        t.start()
         yield
 
     app = FastAPI(title=settings.app_name, lifespan=lifespan)

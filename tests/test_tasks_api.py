@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.config import reset_settings_cache
-from src.models.session import Provider
+
 from src.models.task import TaskStatus
 from src.storage.repositories import TaskRepository
 from src.storage.database import init_db

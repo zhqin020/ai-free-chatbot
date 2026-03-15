@@ -14,7 +14,7 @@ from urllib.request import urlopen
 
 from src.browser.runtime_health import check_provider_runtime
 from src.config import get_settings
-from src.models.session import Provider, SessionState
+from src.models.session import SessionState
 from src.storage.database import init_db
 from src.storage.repositories import SessionRepository
 
@@ -152,7 +152,7 @@ def _find_listening_pids_for_port(port: int) -> list[int]:
     return sorted(matched)
 
 
-def _check_ready_session(provider: Provider) -> bool:
+def _check_ready_session(provider: str) -> bool:
     session_repo = SessionRepository()
     sessions = session_repo.list(enabled_only=True)
     for row in sessions:
@@ -163,7 +163,7 @@ def _check_ready_session(provider: Provider) -> bool:
     return False
 
 
-def _run_preflight(host: str, port: int, required_provider: Provider | None) -> None:
+def _run_preflight(host: str, port: int, required_provider: str | None) -> None:
     settings = get_settings()
     print("[stack-check] preflight start")
     print(
@@ -186,9 +186,9 @@ def _run_preflight(host: str, port: int, required_provider: Provider | None) -> 
         if not _check_ready_session(required_provider):
             raise RuntimeError(
                 "no enabled READY+logged_in session found for provider "
-                f"{required_provider.value}; configure it in /admin/sessions first"
+                f"{required_provider}; configure it in /admin/sessions first"
             )
-        print(f"[stack-check] provider session ready: {required_provider.value}")
+        print(f"[stack-check] provider session ready: {required_provider}")
 
     print("[stack-check] preflight completed")
 
@@ -323,7 +323,6 @@ def main() -> None:
     )
     parser.add_argument(
         "--require-provider-ready",
-        choices=[p.value for p in Provider],
         default=None,
         help="Require at least one enabled READY+logged_in session for the provider before startup",
     )
@@ -418,7 +417,7 @@ def main() -> None:
                 _terminate(mock_proc, "mock_openchat")
                 raise
 
-    required_provider = Provider(args.require_provider_ready) if args.require_provider_ready else None
+    required_provider = args.require_provider_ready if args.require_provider_ready else None
     if not args.skip_checks:
         _run_preflight(host=args.host, port=args.port, required_provider=required_provider)
     else:

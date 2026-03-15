@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from sqlalchemy import func, select
 
-from src.models.session import Provider, SessionConfig, SessionState
+from src.models.session import SessionConfig, SessionState
 from src.models.result import CaseStatus
 from src.models.task import TaskCreate, TaskStatus
 from src.storage.database import (
@@ -15,7 +15,6 @@ from src.storage.database import (
     ProviderConfigORM,
     RawResponseORM,
     SessionORM,
-    SessionTrackingORM,
     SystemLogORM,
     TaskDispatchConfigORM,
     TaskAttemptORM,
@@ -33,8 +32,6 @@ class SessionRepository:
                     id=config.id,
                     provider=config.provider,
                     chat_url=config.chat_url,
-                    enabled=config.enabled,
-                    priority=config.priority,
                     state=SessionState.READY,
                     login_state="unknown",
                 )
@@ -42,24 +39,30 @@ class SessionRepository:
             else:
                 row.provider = config.provider
                 row.chat_url = config.chat_url
-                row.enabled = config.enabled
-                row.priority = config.priority
                 row.updated_at = datetime.now(UTC)
             session.flush()
             session.refresh(row)
             return row
 
-    def list(self, enabled_only: bool = False) -> list[SessionORM]:
+    def list(self) -> list[SessionORM]:
         with session_scope() as session:
             stmt = select(SessionORM)
-            if enabled_only:
-                stmt = stmt.where(SessionORM.enabled.is_(True))
-            rows = session.execute(stmt.order_by(SessionORM.priority.asc(), SessionORM.id.asc())).scalars().all()
+            rows = session.execute(stmt.order_by(SessionORM.id.asc())).scalars().all()
             return rows
 
     def get(self, session_id: str) -> Optional[SessionORM]:
         with session_scope() as session:
             return session.get(SessionORM, session_id)
+
+    def update_http_session(self, session_id: str, http_session_id: str | None) -> bool:
+        with session_scope() as session:
+            row = session.get(SessionORM, session_id)
+            if row is None:
+                return False
+            row.http_session_id = http_session_id
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return True
 
     def update_state(self, session_id: str, state: SessionState, login_state: Optional[str] = None) -> bool:
         with session_scope() as session:
@@ -79,6 +82,12 @@ class SessionRepository:
             row = session.get(SessionORM, session_id)
             if row is None:
                 return False
+            # 先删除所有依赖该 session 的 task_attempts 记录，避免外键约束错误
+            from sqlalchemy import text
+            session.execute(
+                text("DELETE FROM task_attempts WHERE session_id = :sid"),
+                {"sid": session_id}
+            )
             session.delete(row)
             return True
 
@@ -94,7 +103,7 @@ class SessionRepository:
             session.flush()
             return True
 
-    def list_by_provider(self, provider: Provider) -> list[SessionORM]:
+    def list_by_provider(self, provider: str) -> list[SessionORM]:
         with session_scope() as session:
             rows = session.execute(
                 select(SessionORM)
@@ -103,7 +112,7 @@ class SessionRepository:
             ).scalars().all()
             return rows
 
-    def delete_by_provider(self, provider: Provider) -> int:
+    def delete_by_provider(self, provider: str) -> int:
         with session_scope() as session:
             rows = session.execute(select(SessionORM).where(SessionORM.provider == provider)).scalars().all()
             count = len(rows)
@@ -114,7 +123,6 @@ class SessionRepository:
     def recover_stuck_busy_sessions(self, timeout_seconds: int | None = None) -> int:
         with session_scope() as session:
             stmt = select(SessionORM).where(
-                SessionORM.enabled.is_(True),
                 SessionORM.state == SessionState.BUSY,
                 SessionORM.login_state != "need_login",
             )
@@ -152,7 +160,7 @@ class TaskRepository:
         with session_scope() as session:
             return session.get(TaskORM, task_id)
 
-    def claim_next_pending(self, provider_hint: Optional[Provider] = None) -> Optional[TaskORM]:
+    def claim_next_pending(self, provider_hint: Optional[str] = None) -> Optional[TaskORM]:
         with session_scope() as session:
             stmt = select(TaskORM).where(TaskORM.status == TaskStatus.PENDING)
             if provider_hint is not None:
@@ -210,7 +218,7 @@ class TaskRepository:
             session.flush()
         return recovered
 
-    def save_raw_response(self, task_id: str, provider: Provider, response_text: str) -> None:
+    def save_raw_response(self, task_id: str, provider: str, response_text: str) -> None:
         with session_scope() as session:
             row = RawResponseORM(
                 task_id=task_id,
@@ -286,6 +294,20 @@ class TaskRepository:
 
 
 class ProviderConfigRepository:
+    def update_ready_selectors(self, name: str, selectors: dict) -> bool:
+        """
+        更新 provider 的 ready_selectors_json 字段，selectors 为 dict，将以 JSON 字符串存储。
+        """
+        import json
+        with session_scope() as session:
+            row = session.get(ProviderConfigORM, name)
+            if row is None:
+                return False
+            row.ready_selectors_json = json.dumps(selectors, ensure_ascii=False)
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return True
+        
     DEFAULTS: dict[str, dict[str, str]] = {
         "mock_openai": {"url": "http://127.0.0.1:8010/", "icon": "🧪"},
         "deepseek": {"url": "https://chat.deepseek.com/", "icon": "🤖"},
@@ -345,132 +367,42 @@ class ProviderConfigRepository:
                 return False
             session.delete(row)
             return True
-
-
 class TaskDispatchConfigRepository:
-    DEFAULT_MODE = "round_robin"
-    ALLOWED_MODES = {"round_robin", "priority"}
+    DEFAULT_ID = 1
+    DEFAULT_MODE = "priority"
 
-    def ensure_default(self) -> TaskDispatchConfigORM:
-        now = datetime.now(UTC)
-        with session_scope() as session:
-            row = session.get(TaskDispatchConfigORM, 1)
-            if row is None:
-                row = TaskDispatchConfigORM(
-                    id=1,
-                    mode=self.DEFAULT_MODE,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(row)
-                session.flush()
-                session.refresh(row)
-            return row
+    def _ensure_row(self, session, timestamp: datetime) -> TaskDispatchConfigORM:
+        row = session.get(TaskDispatchConfigORM, self.DEFAULT_ID)
+        if row is None:
+            row = TaskDispatchConfigORM(
+                id=self.DEFAULT_ID,
+                mode=self.DEFAULT_MODE,
+                created_at=timestamp,
+                updated_at=timestamp,
+            )
+            session.add(row)
+        return row
 
     def get(self) -> TaskDispatchConfigORM:
-        self.ensure_default()
+        now = datetime.now(UTC)
         with session_scope() as session:
-            row = session.get(TaskDispatchConfigORM, 1)
-            if row is None:
-                raise RuntimeError("task dispatch config not initialized")
+            row = self._ensure_row(session, now)
+            session.flush()
+            session.refresh(row)
             return row
 
     def get_mode(self) -> str:
-        row = self.get()
-        if row.mode not in self.ALLOWED_MODES:
-            return self.DEFAULT_MODE
-        return row.mode
+        return self.get().mode
 
     def set_mode(self, mode: str) -> TaskDispatchConfigORM:
-        if mode not in self.ALLOWED_MODES:
-            raise ValueError(f"unsupported task dispatch mode: {mode}")
-
         now = datetime.now(UTC)
         with session_scope() as session:
-            row = session.get(TaskDispatchConfigORM, 1)
-            if row is None:
-                row = TaskDispatchConfigORM(
-                    id=1,
-                    mode=mode,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(row)
-            else:
-                row.mode = mode
-                row.updated_at = now
+            row = self._ensure_row(session, now)
+            row.mode = mode
+            row.updated_at = now
             session.flush()
             session.refresh(row)
             return row
-
-
-class SessionTrackingRepository:
-    def upsert(
-        self,
-        *,
-        session_id: str,
-        session_name: str,
-        start_time: datetime,
-        status: str,
-        http_session_id: str | None = None,
-    ) -> SessionTrackingORM:
-        now = datetime.now(UTC)
-        with session_scope() as session:
-            row = session.get(SessionTrackingORM, session_id)
-            if row is None:
-                row = SessionTrackingORM(
-                    session_id=session_id,
-                    session_name=session_name,
-                    http_session_id=http_session_id,
-                    start_time=start_time,
-                    status=status,
-                    updated_at=now,
-                )
-                session.add(row)
-            else:
-                row.session_name = session_name
-                row.start_time = start_time
-                row.status = status
-                row.http_session_id = http_session_id
-                row.updated_at = now
-            session.flush()
-            session.refresh(row)
-            return row
-
-    def get(self, session_id: str) -> SessionTrackingORM | None:
-        with session_scope() as session:
-            return session.get(SessionTrackingORM, session_id)
-
-    def update_http_session(self, session_id: str, http_session_id: str | None) -> bool:
-        now = datetime.now(UTC)
-        with session_scope() as session:
-            row = session.get(SessionTrackingORM, session_id)
-            if row is None:
-                return False
-            row.http_session_id = http_session_id
-            row.updated_at = now
-            session.flush()
-            return True
-
-    def update_status(self, session_id: str, status: str) -> bool:
-        now = datetime.now(UTC)
-        with session_scope() as session:
-            row = session.get(SessionTrackingORM, session_id)
-            if row is None:
-                return False
-            row.status = status
-            row.updated_at = now
-            session.flush()
-            return True
-
-    def delete(self, session_id: str) -> bool:
-        with session_scope() as session:
-            row = session.get(SessionTrackingORM, session_id)
-            if row is None:
-                return False
-            session.delete(row)
-            return True
-
 
 class AttemptRepository:
     def start_attempt(self, task_id: str, session_id: str, attempt_no: int) -> TaskAttemptORM:
@@ -535,7 +467,7 @@ class LogRepository:
         level: str,
         event: str,
         message: str,
-        provider: Provider | None = None,
+        provider: str | None = None,
         task_id: str | None = None,
         session_id: str | None = None,
     ) -> SystemLogORM:
@@ -559,7 +491,7 @@ class LogRepository:
         *,
         trace_id: str | None = None,
         level: str | None = None,
-        provider: Provider | None = None,
+        provider: str | None = None,
         task_id: str | None = None,
         session_id: str | None = None,
         start_at: datetime | None = None,

@@ -84,7 +84,7 @@ class StatisticsAnalyzer:
 
         task_by_provider: dict[str, list[TaskORM]] = defaultdict(list)
         for task in tasks:
-            provider_key = task.provider_hint.value if task.provider_hint is not None else "unknown"
+            provider_key = task.provider_hint if task.provider_hint is not None else "unknown"
             task_by_provider[provider_key].append(task)
 
         attempts_by_task: dict[str, list[TaskAttemptORM]] = defaultdict(list)

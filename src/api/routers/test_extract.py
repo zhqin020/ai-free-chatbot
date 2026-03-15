@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from src.models.result import LegalExtraction
-from src.models.session import Provider
+
 from src.parser import JSONValidator, ResponseExtractor
 from src.prompt import PromptGenerator
 from fastapi import APIRouter
@@ -15,11 +15,11 @@ class TestExtractRequest(BaseModel):
     prompt: str = Field(min_length=1)
     document_text: str = Field(min_length=1)
     raw_response: str = Field(min_length=1)
-    provider_hint: Provider | None = None
+    provider_hint: str | None = None
 
 
 class TestExtractResponse(BaseModel):
-    provider_hint: Provider | None = None
+    provider_hint: str | None = None
     generated_prompt: str
     raw_response: str
     valid: bool
@@ -34,7 +34,7 @@ json_validator = JSONValidator()
 
 
 @router.post("/extract", response_model=TestExtractResponse)
-def test_extract(payload: TestExtractRequest) -> TestExtractResponse:
+def extract_handler(payload: TestExtractRequest) -> TestExtractResponse:
     generated_prompt = prompt_generator.build_base_prompt(payload.prompt)
     generated_prompt = f"{generated_prompt}\n\n文书原文：\n{payload.document_text}"
 

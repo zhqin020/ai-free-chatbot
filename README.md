@@ -75,6 +75,12 @@ python -m scripts.run_stack --skip-checks
 python -m scripts.run_stack --with-mock-openchat
 python -m scripts.run_stack --with-mock-openchat --mock-openchat-port 8010
 python -m scripts.run_stack --open-admin-browser
+	# 注意：如需测试 mock_openai，请确保 provider 名称与参数一致。
+	# 例如：
+	# python -m scripts.run_stack --with-mock-openai --open-admin-browser
+	# 并在管理页面/session 配置中选择 provider=mock_openai。
+	# 若用 --with-mock-openchat，则 provider 应为 mock_openchat。
+	# provider 名称不一致会导致“Open Browser”失败或 500 错误。
 python -m scripts.run_stack --open-admin-browser --admin-path /admin/sessions
 python -m scripts.run_stack --open-admin-browser --open-admin-browser-no-keyring
 

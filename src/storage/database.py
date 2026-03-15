@@ -9,7 +9,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship,
 
 from src.config import get_settings
 from src.models.result import CaseStatus
-from src.models.session import Provider, SessionState
+from src.models.session import SessionState
 from src.models.task import TaskStatus
 
 
@@ -25,12 +25,9 @@ class SessionORM(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    provider: Mapped[Provider] = mapped_column(
-        Enum(Provider, native_enum=False), nullable=False
-    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
     chat_url: Mapped[str] = mapped_column(Text, nullable=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    http_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     state: Mapped[SessionState] = mapped_column(
         Enum(SessionState, native_enum=False), default=SessionState.READY, nullable=False
     )
@@ -52,6 +49,10 @@ class ProviderConfigORM(Base):
     name: Mapped[str] = mapped_column(String(64), primary_key=True)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     icon: Mapped[str] = mapped_column(String(256), nullable=False)
+
+    # 新增：用于存储 chat ready 页面特征（selectors），JSON 字符串
+    ready_selectors_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -73,17 +74,6 @@ class TaskDispatchConfigORM(Base):
     )
 
 
-class SessionTrackingORM(Base):
-    __tablename__ = "session_tracking"
-
-    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    session_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    http_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
-    )
 
 
 class TaskORM(Base):
@@ -96,8 +86,8 @@ class TaskORM(Base):
     )
     prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
     document_text: Mapped[str] = mapped_column(Text, nullable=False)
-    provider_hint: Mapped[Provider | None] = mapped_column(
-        Enum(Provider, native_enum=False), nullable=True
+    provider_hint: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -135,8 +125,8 @@ class RawResponseORM(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False)
-    provider: Mapped[Provider] = mapped_column(
-        Enum(Provider, native_enum=False), nullable=False
+    provider: Mapped[str] = mapped_column(
+        String(64), nullable=False
     )
     response_text: Mapped[str] = mapped_column(Text, nullable=False)
     captured_at: Mapped[datetime] = mapped_column(
@@ -173,8 +163,8 @@ class SystemMetricHourlyORM(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     hour_bucket: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    provider: Mapped[Provider] = mapped_column(
-        Enum(Provider, native_enum=False), nullable=False
+    provider: Mapped[str] = mapped_column(
+        String(64), nullable=False
     )
     success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -188,8 +178,8 @@ class SystemLogORM(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     level: Mapped[str] = mapped_column(String(16), nullable=False)
-    provider: Mapped[Provider | None] = mapped_column(
-        Enum(Provider, native_enum=False), nullable=True
+    provider: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
     task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -215,6 +205,12 @@ def get_session_maker(echo: bool = False):
 
 def init_db(echo: bool = False) -> None:
     engine = get_engine(echo=echo)
+    # 自动注册 pool_entries 表
+    try:
+        from src.models.pool_entry import Base as PoolEntryBase
+        PoolEntryBase.metadata.create_all(engine)
+    except ImportError:
+        pass
     Base.metadata.create_all(engine)
 
 

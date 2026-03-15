@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from src.models.session import Provider
+
 
 
 class TaskStatus(str, Enum):
@@ -22,14 +22,14 @@ class TaskCreate(BaseModel):
     external_id: Optional[str] = None
     prompt: str = Field(min_length=1)
     document_text: str = Field(min_length=1)
-    provider_hint: Optional[Provider] = None
+    provider_hint: Optional[str] = None
 
 
 class TaskRead(BaseModel):
     id: str
     status: TaskStatus
     external_id: Optional[str] = None
-    provider_hint: Optional[Provider] = None
+    provider_hint: Optional[str] = None
     latest_trace_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -39,9 +39,9 @@ class TaskPollRead(BaseModel):
     id: str
     status: TaskStatus
     external_id: Optional[str] = None
-    provider_hint: Optional[Provider] = None
+    provider_hint: Optional[str] = None
     latest_trace_id: Optional[str] = None
-    provider: Optional[Provider] = None
+    provider: Optional[str] = None
     raw_response: Optional[str] = None
     extracted_json: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None

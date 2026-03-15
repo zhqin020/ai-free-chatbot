@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from src.config import reset_settings_cache
 from src.models.task import TaskCreate
 from src.storage.database import init_db
-from src.models.session import Provider, SessionConfig, SessionState
+from src.models.session import SessionConfig, SessionState
 from src.storage.repositories import SessionRepository
 from src.storage.repositories import TaskRepository
 
@@ -179,7 +179,6 @@ def test_session_discovery_and_ready_update(client: TestClient) -> None:
     assert "s-deepseek-1" in ids
 
     deepseek_row = next(row for row in discovered if row["id"] == "s-deepseek-1")
-    assert deepseek_row["session_name"].startswith("deepseek-")
     assert deepseek_row["status"] == deepseek_row["state"]
     assert deepseek_row["start_time"] is not None
 

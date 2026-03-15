@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.config import reset_settings_cache
-from src.models.session import Provider, SessionConfig
+from src.models.session import SessionConfig
 from src.models.task import TaskCreate, TaskStatus
 from src.storage.database import init_db
 from src.storage.repositories import (
@@ -43,7 +43,7 @@ def _seed_metrics_data() -> None:
     session_repo.upsert(
         SessionConfig(
             id="s-openchat-1",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -52,16 +52,16 @@ def _seed_metrics_data() -> None:
     session_repo.upsert(
         SessionConfig(
             id="s-gemini-1",
-            provider=Provider.GEMINI,
+            provider="gemini",
             chat_url="https://example.com/gemini",
             enabled=True,
             priority=20,
         )
     )
 
-    t1 = task_repo.create(TaskCreate(prompt="p1", document_text="d1", provider_hint=Provider.OPENCHAT))
-    t2 = task_repo.create(TaskCreate(prompt="p2", document_text="d2", provider_hint=Provider.OPENCHAT))
-    t3 = task_repo.create(TaskCreate(prompt="p3", document_text="d3", provider_hint=Provider.GEMINI))
+    t1 = task_repo.create(TaskCreate(prompt="p1", document_text="d1", provider_hint="openchat"))
+    t2 = task_repo.create(TaskCreate(prompt="p2", document_text="d2", provider_hint="openchat"))
+    t3 = task_repo.create(TaskCreate(prompt="p3", document_text="d3", provider_hint="gemini"))
 
     task_repo.mark_status(t1.id, TaskStatus.COMPLETED)
     task_repo.mark_status(t2.id, TaskStatus.FAILED)

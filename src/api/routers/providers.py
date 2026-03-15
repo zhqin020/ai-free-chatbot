@@ -4,16 +4,16 @@ from fastapi import APIRouter, HTTPException, status
 
 from src.api.browser_open_service import open_page_in_server_browser
 from src.models.provider import (
-    ProviderClearSessionsResponse,
     ProviderConfigCreate,
     ProviderConfigRead,
     ProviderConfigUpdate,
     ProviderOpenResponse,
+    ProviderClearSessionsResponse,
     ProviderSessionTargetResponse,
     TaskDispatchConfigRead,
     TaskDispatchConfigUpdate,
 )
-from src.models.session import Provider
+
 from src.storage.database import ProviderConfigORM
 from src.storage.repositories import ProviderConfigRepository, SessionRepository, TaskDispatchConfigRepository
 
@@ -23,13 +23,9 @@ session_repo = SessionRepository()
 dispatch_repo = TaskDispatchConfigRepository()
 
 
-def _map_session_provider(name: str) -> Provider | None:
-    if name == "mock_openai":
-        return Provider.OPENCHAT
-    try:
-        return Provider(name)
-    except ValueError:
-        return None
+def _map_session_provider(name: str) -> str | None:
+    # 直接返回自身，保持 provider 名称全链路一致
+    return name if name else None
 
 
 def _to_read(row: ProviderConfigORM) -> ProviderConfigRead:
@@ -39,7 +35,7 @@ def _to_read(row: ProviderConfigORM) -> ProviderConfigRead:
         url=row.url,
         icon=row.icon,
         builtin=row.name in provider_repo.DEFAULTS,
-        session_provider=mapped.value if mapped else None,
+        session_provider=mapped if mapped else None,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -92,7 +88,10 @@ def delete_provider(provider_name: str) -> dict[str, bool]:
     deleted = provider_repo.delete(provider_name)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"provider not found: {provider_name}")
-    return {"deleted": True}
+
+    # 自动清理相关 session
+    cleared_count = session_repo.delete_by_provider(provider_name)
+    return {"deleted": True, "sessions_cleared": cleared_count}
 
 
 @router.post("/{provider_name}/open-browser", response_model=ProviderOpenResponse)
@@ -105,7 +104,7 @@ async def open_provider(provider_name: str) -> ProviderOpenResponse:
     if mapped is not None:
         # Reuse the same profile namespace as session/worker to preserve login state.
         browser_key = f"s-{row.name}-1"
-        browser_provider = mapped.value
+        browser_provider = mapped
     else:
         browser_key = f"provider-{row.name}"
         browser_provider = row.name

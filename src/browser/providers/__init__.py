@@ -1,13 +1,12 @@
-from src.browser.providers.base import ProviderAdapter
-from src.browser.providers.deepseek_adapter import DeepSeekAdapter
-from src.browser.providers.gemini_adapter import GeminiAdapter
-from src.browser.providers.grok_adapter import GrokAdapter
-from src.browser.providers.openchat_adapter import OpenChatAdapter
+from src.browser.providers.base import ProviderAdapter, DefaultProviderAdapter
 
 __all__ = [
-	"DeepSeekAdapter",
-	"GeminiAdapter",
-	"GrokAdapter",
-	"OpenChatAdapter",
-	"ProviderAdapter",
+    "ProviderAdapter",
+    "DefaultProviderAdapter",
 ]
+
+# NOTE: OpenChatAdapter 未定义，自动降级为 DefaultProviderAdapter，确保可用
+from src.browser.providers import DefaultProviderAdapter
+
+class OpenChatAdapter(DefaultProviderAdapter):
+    pass

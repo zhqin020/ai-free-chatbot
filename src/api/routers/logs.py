@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from src.models.session import Provider
+
 from src.storage.repositories import LogRepository
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
@@ -16,7 +16,7 @@ class LogItemResponse(BaseModel):
     id: int
     trace_id: str | None = None
     level: str
-    provider: Provider | None = None
+    provider: str | None = None
     task_id: str | None = None
     session_id: str | None = None
     event: str
@@ -35,7 +35,7 @@ class LogsQueryResponse(BaseModel):
 def get_logs(
     trace_id: str | None = None,
     level: str | None = None,
-    provider: Provider | None = None,
+    provider: str | None = None,
     task_id: str | None = None,
     session_id: str | None = None,
     start_at: datetime | None = None,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.models.session import Provider
+
 
 
 def check_provider_runtime(provider: Provider | None = None) -> tuple[bool, str | None]:

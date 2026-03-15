@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.config import reset_settings_cache
-from src.models.session import Provider
+
 from src.storage.database import init_db
 from src.storage.repositories import LogRepository
 
@@ -35,7 +35,7 @@ def _seed_logs() -> None:
     repo = LogRepository()
     repo.add_log(
         level="INFO",
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         task_id="task-1",
         session_id="session-1",
         event="task_dispatched",
@@ -43,7 +43,7 @@ def _seed_logs() -> None:
     )
     repo.add_log(
         level="ERROR",
-        provider=Provider.GEMINI,
+        provider="gemini",
         task_id="task-2",
         session_id="session-2",
         event="task_failed",
@@ -51,7 +51,7 @@ def _seed_logs() -> None:
     )
     repo.add_log(
         level="WARNING",
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         task_id="task-1",
         session_id="session-1",
         event="extract_retry_scheduled",
@@ -114,7 +114,7 @@ def test_logs_filter_by_trace_id(client: TestClient) -> None:
     repo.add_log(
         trace_id=trace_a,
         level="INFO",
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         task_id="task-a",
         session_id="session-a",
         event="task_dispatched",
@@ -123,7 +123,7 @@ def test_logs_filter_by_trace_id(client: TestClient) -> None:
     repo.add_log(
         trace_id=trace_a,
         level="INFO",
-        provider=Provider.OPENCHAT,
+        provider="openchat",
         task_id="task-a",
         session_id="session-a",
         event="task_completed",
@@ -132,7 +132,7 @@ def test_logs_filter_by_trace_id(client: TestClient) -> None:
     repo.add_log(
         trace_id=trace_b,
         level="ERROR",
-        provider=Provider.GEMINI,
+        provider="gemini",
         task_id="task-b",
         session_id="session-b",
         event="task_failed",

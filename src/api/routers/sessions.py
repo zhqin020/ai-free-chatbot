@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from datetime import UTC, datetime
 
+import asyncio
+
+
+logger = logging.getLogger(__name__)
+
 from fastapi import APIRouter, HTTPException, status
+import asyncio
 
 from src.api.browser_open_service import (
     ensure_runtime_cookie_in_server_browser,
@@ -12,7 +19,6 @@ from src.api.browser_open_service import (
     open_page_in_server_browser,
 )
 from src.models.session import (
-    Provider,
     SessionConfig,
     SessionHttpTrackingRead,
     SessionOpenRead,
@@ -24,48 +30,19 @@ from src.models.session import (
     SessionVerifyRead,
 )
 from src.storage.database import SessionORM
-from src.storage.repositories import ProviderConfigRepository, SessionRepository, SessionTrackingRepository
+from src.storage.repositories import ProviderConfigRepository, SessionRepository
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 session_repo = SessionRepository()
 provider_repo = ProviderConfigRepository()
-tracking_repo = SessionTrackingRepository()
 
 
 def _to_session_read(row: SessionORM) -> SessionRead:
-    ordinal_match = re.search(r"-(\d+)$", row.id)
-    ordinal = ordinal_match.group(1) if ordinal_match else "1"
-    session_name = f"{row.provider.value}-{ordinal}"
-
-    tracking = tracking_repo.get(row.id)
-    http_session_id = tracking.http_session_id if tracking is not None else None
-    if tracking is None:
-        tracking_repo.upsert(
-            session_id=row.id,
-            session_name=session_name,
-            start_time=row.created_at,
-            status=row.state.value,
-            http_session_id=http_session_id,
-        )
-    else:
-        tracking_repo.upsert(
-            session_id=row.id,
-            session_name=session_name,
-            start_time=tracking.start_time,
-            status=row.state.value,
-            http_session_id=http_session_id,
-        )
-
     return SessionRead(
         id=row.id,
-        session_name=session_name,
-        http_session_id=http_session_id,
-        start_time=row.created_at,
-        status=row.state.value,
+        http_session_id=row.http_session_id,
         provider=row.provider,
         chat_url=row.chat_url,
-        enabled=row.enabled,
-        priority=row.priority,
         state=row.state,
         login_state=row.login_state,
         last_seen_at=row.last_seen_at,
@@ -74,20 +51,17 @@ def _to_session_read(row: SessionORM) -> SessionRead:
     )
 
 
-def _map_provider_name_to_session_provider(name: str) -> Provider | None:
-    if name == "mock_openai":
-        return Provider.OPENCHAT
-    try:
-        return Provider(name)
-    except ValueError:
-        return None
+def _map_provider_name_to_session_provider(name: str) -> str | None:
+    # 现在所有 provider 直接用 str
+    return name
 
 
 async def _probe_current_http_session_id(row: SessionORM) -> tuple[str | None, str | None, str | None]:
     extracted = await ensure_runtime_cookie_in_server_browser(
+        
         key=row.id,
         url=row.chat_url,
-        provider=row.provider.value,
+        provider=getattr(row.provider, 'value', row.provider),
     )
     source = "browser_context"
     if extracted is None:
@@ -123,37 +97,23 @@ def discover_sessions() -> list[SessionRead]:
 
     for index, provider_row in enumerate(provider_rows, start=1):
         mapped_provider = _map_provider_name_to_session_provider(provider_row.name)
-        if mapped_provider is None:
-            continue
-
+        # 支持动态provider：只要有name就允许创建
         session_id = f"s-{provider_row.name}-1"
         existing = session_repo.get(session_id)
         config = SessionConfig(
             id=session_id,
             provider=mapped_provider,
             chat_url=provider_row.url,
-            enabled=True,
-            priority=existing.priority if existing is not None else (100 + index),
         )
         row = session_repo.upsert(config)
-        ordinal_match = re.search(r"-(\d+)$", row.id)
-        ordinal = ordinal_match.group(1) if ordinal_match else "1"
-        previous_tracking = tracking_repo.get(row.id)
-        tracking_repo.upsert(
-            session_id=row.id,
-            session_name=f"{row.provider.value}-{ordinal}",
-            start_time=previous_tracking.start_time if previous_tracking is not None else row.created_at,
-            status=row.state.value,
-            http_session_id=previous_tracking.http_session_id if previous_tracking is not None else None,
-        )
         discovered.append(_to_session_read(row))
 
     return discovered
 
 
 @router.get("", response_model=list[SessionRead])
-def list_sessions(enabled_only: bool = False) -> list[SessionRead]:
-    rows = session_repo.list(enabled_only=enabled_only)
+def list_sessions() -> list[SessionRead]:
+    rows = session_repo.list()
     return [_to_session_read(row) for row in rows]
 
 
@@ -185,21 +145,75 @@ def delete_session(session_id: str) -> dict[str, bool]:
 
 
 @router.post("/{session_id}/mark-login-ok", response_model=SessionRead)
-def mark_login_ok(session_id: str) -> SessionRead:
+async def mark_login_ok(session_id: str) -> SessionRead:
     updated = session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
     row = session_repo.get(session_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
-    tracking_repo.update_status(session_id, SessionState.READY.value)
+    # 自动提取 chat selector 并写入 provider
+    provider = row.provider
+    chat_url = row.chat_url
+    from src.api.browser_open_service import _open_pool
+    try:
+        page = await _open_pool.get_page(session_id=row.id, url=chat_url, provider=provider)
+        selectors = await auto_extract_chat_selectors(page)
+        provider_repo.update_ready_selectors(provider, selectors)
+    except Exception as e:
+        logger.warning(f"[mark_login_ok] auto extract selectors failed: {e}")
     return _to_session_read(row)
 
-
-@router.post("/{session_id}/notify-ready", response_model=SessionRead)
-def notify_ready(session_id: str) -> SessionRead:
-    # Alias for automation scripts: explicitly notify worker the session is human-ready.
-    return mark_login_ok(session_id)
+# 辅助函数：自动提取 chat 页面 selector
+async def auto_extract_chat_selectors(page):
+    selectors = {}
+    # 1. 输入框 selector
+    input_candidates = [
+        "textarea",
+        "input[type='text']",
+        "[contenteditable='true']",
+        "textarea[aria-label]",
+        "input[aria-label]",
+    ]
+    for sel in input_candidates:
+        try:
+            el = page.locator(sel).first
+            if await el.is_visible():
+                selectors["input_selector"] = sel
+                break
+        except Exception:
+            continue
+    # 2. 发送按钮 selector
+    send_candidates = [
+        "button:has-text('发送')",
+        "button:has-text('Send')",
+        "button[aria-label*='send' i]",
+        "button[type='submit']",
+    ]
+    for sel in send_candidates:
+        try:
+            el = page.locator(sel).first
+            if await el.is_visible():
+                selectors["send_button_selector"] = sel
+                break
+        except Exception:
+            continue
+    # 3. 响应区域 selector
+    response_candidates = [
+        ".message, .response, .chat-message",
+        "div[role='log']",
+        "div[aria-live]",
+        "article",
+    ]
+    for sel in response_candidates:
+        try:
+            el = page.locator(sel).first
+            if await el.is_visible():
+                selectors["response_selector"] = sel
+                break
+        except Exception:
+            continue
+    return selectors
 
 
 @router.post("/{session_id}/open", response_model=SessionOpenRead)
@@ -208,8 +222,14 @@ async def open_session(session_id: str) -> SessionOpenRead:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
 
-    previous_tracking = tracking_repo.get(row.id)
-    previous_http = previous_tracking.http_session_id if previous_tracking is not None else None
+    # 检查 provider 是否存在
+    provider_row = provider_repo.get(row.provider)
+    if provider_row is None:
+        # 自动删除该 session
+        session_repo.delete(session_id)
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=f"provider '{row.provider}' 已被删除，当前会话已自动清理")
+
+    previous_http = row.http_session_id
     _, current_http, _ = await _probe_current_http_session_id(row)
 
     requires_confirm = bool(previous_http and current_http and previous_http != current_http)
@@ -221,12 +241,12 @@ async def open_session(session_id: str) -> SessionOpenRead:
         )
 
     if current_http is not None:
-        tracking_repo.update_http_session(row.id, current_http)
+        session_repo.update_http_session(row.id, current_http)
 
     opened, open_message = await open_page_in_server_browser(
         key=row.id,
         url=row.chat_url,
-        provider=row.provider.value,
+        provider=row.provider,
     )
 
     if opened:
@@ -234,7 +254,6 @@ async def open_session(session_id: str) -> SessionOpenRead:
         # Promote to READY to unblock scheduler; if still not actually ready,
         # worker will classify back to WAIT_LOGIN on next attempt.
         session_repo.update_state(row.id, SessionState.READY, login_state="logged_in")
-        tracking_repo.update_status(row.id, SessionState.READY.value)
     else:
         warning = f"{warning} | {open_message}" if warning else open_message
 
@@ -264,18 +283,7 @@ def rebuild_session(session_id: str) -> SessionRebuildRead:
     )
 
     session_repo.delete(old_id)
-    tracking_repo.delete(old_id)
     rebuilt = session_repo.upsert(config)
-
-    ordinal_match = re.search(r"-(\d+)$", rebuilt.id)
-    ordinal = ordinal_match.group(1) if ordinal_match else "1"
-    tracking_repo.upsert(
-        session_id=rebuilt.id,
-        session_name=f"{rebuilt.provider.value}-{ordinal}",
-        start_time=rebuilt.created_at,
-        status=rebuilt.state.value,
-        http_session_id=None,
-    )
 
     return SessionRebuildRead(
         old_session_id=old_id,
@@ -292,7 +300,7 @@ async def probe_http_session(session_id: str) -> SessionHttpTrackingRead:
 
     cookie_name, digest, source = await _probe_current_http_session_id(row)
     if digest is None:
-        tracking_repo.update_http_session(row.id, None)
+        session_repo.update_http_session(row.id, None)
         return SessionHttpTrackingRead(
             session_id=row.id,
             tracked=False,
@@ -302,7 +310,7 @@ async def probe_http_session(session_id: str) -> SessionHttpTrackingRead:
         )
 
     composed = f"{row.id}#{digest}"
-    tracking_repo.update_http_session(row.id, digest)
+    session_repo.update_http_session(row.id, digest)
     updated_at = datetime.now(UTC)
     return SessionHttpTrackingRead(
         session_id=row.id,
@@ -316,24 +324,52 @@ async def probe_http_session(session_id: str) -> SessionHttpTrackingRead:
 
 @router.post("/{session_id}/verify", response_model=SessionVerifyRead)
 async def verify_session(session_id: str) -> SessionVerifyRead:
-
+    # 健康检查：页面对象未关闭，但内容异常时仅记录日志
+    from src.browser.browser_controller import BrowserController
+    from src.browser.session_pool import BrowserSessionPool
     row = session_repo.get(session_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
-    tracking = tracking_repo.get(session_id)
-    stored_http = tracking.http_session_id if tracking is not None else None
+
+    # 检查 provider 是否存在
+    provider_row = provider_repo.get(row.provider)
+    if provider_row is None:
+        session_repo.delete(session_id)
+        return SessionVerifyRead(
+            session_id=row.id,
+            valid=False,
+            deleted=True,
+            reason=f"provider '{row.provider}' 已被删除，会话已自动清理",
+            stored_http_session_id=None,
+            current_http_session_id=None,
+            tracked=False,
+            updated_at=datetime.now(UTC),
+        )
+    try:
+        from src.api.browser_open_service import _open_pool
+        key = _open_pool._make_key(row.provider, row.id)
+        entry = _open_pool._entries.get(key)
+        if entry is not None and not entry.page.is_closed():
+            required_selector = _open_pool.required_selector or None
+            if required_selector:
+                healthy = await entry.controller.is_page_healthy(entry.page, required_selector=required_selector)
+                if not healthy:
+                    logger.error(f"Session page unhealthy: session_id=%s provider=%s url=%s selector=%s", row.id, row.provider, entry.url, required_selector)
+    except Exception as exc:
+        logger.error(f"Session health check error: session_id=%s provider=%s error=%s", row.id, row.provider, exc)
+    stored_http = row.http_session_id
     cookie_name, current_http, _ = await _probe_current_http_session_id(row)
     page_state = await inspect_runtime_page_state_in_server_browser(
         key=row.id,
         url=row.chat_url,
-        provider=row.provider.value,
+        provider=row.provider,
     )
     updated_at = datetime.now(UTC)
+    logger.info(f"[verify_session] session_id={row.id} provider={row.provider} stored_http={stored_http} current_http={current_http} cookie_name={cookie_name} page_state={page_state}")
 
     if page_state is not None and not page_state.get("chat_ready", False):
         reason = _page_gate_reason(page_state)
         session_repo.update_state(session_id, SessionState.WAIT_LOGIN, login_state="need_login")
-        tracking_repo.update_status(session_id, SessionState.WAIT_LOGIN.value)
         return SessionVerifyRead(
             session_id=row.id,
             valid=False,
@@ -350,7 +386,6 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
     if current_http is None:
         if page_state is not None and page_state.get("chat_ready", False):
             session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
-            tracking_repo.update_status(session_id, SessionState.READY.value)
             return SessionVerifyRead(
                 session_id=row.id,
                 valid=True,
@@ -374,9 +409,8 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
 
     # Rule 2: first successful tracking (no stored id yet) -> initialize and keep.
     if stored_http is None:
-        tracking_repo.update_http_session(row.id, current_http)
+        session_repo.update_http_session(row.id, current_http)
         session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
-        tracking_repo.update_status(session_id, SessionState.READY.value)
         return SessionVerifyRead(
             session_id=row.id,
             valid=True,
@@ -395,9 +429,8 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
     # return invalid signal but do not force state downgrade here.
     if stored_http != current_http:
         if page_state is not None and page_state.get("chat_ready", False):
-            tracking_repo.update_http_session(row.id, current_http)
+            session_repo.update_http_session(row.id, current_http)
             session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
-            tracking_repo.update_status(session_id, SessionState.READY.value)
             return SessionVerifyRead(
                 session_id=row.id,
                 valid=True,
@@ -422,9 +455,8 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
         )
 
     # Rule 4: consistent id -> valid.
-    tracking_repo.update_http_session(row.id, current_http)
+    session_repo.update_http_session(row.id, current_http)
     session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
-    tracking_repo.update_status(session_id, SessionState.READY.value)
     return SessionVerifyRead(
         session_id=row.id,
         valid=True,

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from src.browser.scheduler import WeightedRoundRobinScheduler
 from src.browser.session_registry import SessionRegistry
-from src.models.session import Provider, SessionConfig, SessionState
+from src.models.session import SessionConfig, SessionState
 from src.models.task import TaskCreate, TaskStatus
 from src.storage.database import init_db
 from src.config import reset_settings_cache
@@ -30,7 +30,7 @@ def test_registry_register_and_list() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-1",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=50,
@@ -47,7 +47,7 @@ def test_scheduler_dispatch_one_task() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-1",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -60,7 +60,7 @@ def test_scheduler_dispatch_one_task() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -77,7 +77,7 @@ def test_scheduler_marks_wait_login_on_human_verification_error() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-verify",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -90,7 +90,7 @@ def test_scheduler_marks_wait_login_on_human_verification_error() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -121,7 +121,7 @@ def test_scheduler_marks_wait_login_on_chat_window_not_ready_error() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-not-ready",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -134,7 +134,7 @@ def test_scheduler_marks_wait_login_on_chat_window_not_ready_error() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -165,7 +165,7 @@ def test_scheduler_does_not_dispatch_wait_login_session() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-wait",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -182,7 +182,7 @@ def test_scheduler_does_not_dispatch_wait_login_session() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -202,7 +202,7 @@ def test_scheduler_fails_pending_task_after_timeout_without_ready_session() -> N
     registry.register(
         SessionConfig(
             id="s-openchat-wait-timeout",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -219,7 +219,7 @@ def test_scheduler_fails_pending_task_after_timeout_without_ready_session() -> N
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -244,7 +244,7 @@ def test_scheduler_keeps_pending_task_before_timeout_without_ready_session() -> 
     registry.register(
         SessionConfig(
             id="s-openchat-wait-short",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -261,7 +261,7 @@ def test_scheduler_keeps_pending_task_before_timeout_without_ready_session() -> 
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -285,7 +285,7 @@ def test_scheduler_marks_unhealthy_on_runtime_display_error() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-runtime",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -298,7 +298,7 @@ def test_scheduler_marks_unhealthy_on_runtime_display_error() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -329,7 +329,7 @@ def test_scheduler_marks_unhealthy_on_connection_refused_error() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-conn-refused",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="http://127.0.0.1:8010/",
             enabled=True,
             priority=10,
@@ -342,7 +342,7 @@ def test_scheduler_marks_unhealthy_on_connection_refused_error() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -373,7 +373,7 @@ def test_scheduler_recovers_stale_busy_session() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-stale-busy",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -392,7 +392,7 @@ def test_scheduler_recovers_stale_busy_session() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -408,7 +408,7 @@ def test_scheduler_stops_redispatch_after_failed_attempt() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-max-fail",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat",
             enabled=True,
             priority=10,
@@ -421,7 +421,7 @@ def test_scheduler_stops_redispatch_after_failed_attempt() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 
@@ -452,7 +452,7 @@ def test_scheduler_requeues_after_wait_login_failure_and_falls_back_to_ready_ses
     registry.register(
         SessionConfig(
             id="s-deepseek-1",
-            provider=Provider.DEEPSEEK,
+            provider="deepseek",
             chat_url="https://chat.deepseek.com/",
             enabled=True,
             priority=10,
@@ -461,7 +461,7 @@ def test_scheduler_requeues_after_wait_login_failure_and_falls_back_to_ready_ses
     registry.register(
         SessionConfig(
             id="s-openchat-1",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="http://127.0.0.1:8010/",
             enabled=True,
             priority=10,
@@ -483,7 +483,7 @@ def test_scheduler_requeues_after_wait_login_failure_and_falls_back_to_ready_ses
 
     first = scheduler.dispatch_next()
     assert first is not None
-    assert first.provider == Provider.DEEPSEEK
+    assert first.provider == "deepseek"
     scheduler.mark_attempt_failed(
         task_id=first.task_id,
         session_id=first.session_id,
@@ -498,7 +498,7 @@ def test_scheduler_requeues_after_wait_login_failure_and_falls_back_to_ready_ses
     second = scheduler.dispatch_next()
     assert second is not None
     assert second.task_id == task.id
-    assert second.provider == Provider.OPENCHAT
+    assert second.provider == "openchat"
 
 
 def test_scheduler_round_robin_mode_ignores_priority() -> None:
@@ -509,7 +509,7 @@ def test_scheduler_round_robin_mode_ignores_priority() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-a",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat-a",
             enabled=True,
             priority=200,
@@ -518,10 +518,10 @@ def test_scheduler_round_robin_mode_ignores_priority() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-b",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat-b",
             enabled=True,
-            priority=1,
+            priority=100,
         )
     )
     registry.mark_ready("s-openchat-a")
@@ -533,7 +533,7 @@ def test_scheduler_round_robin_mode_ignores_priority() -> None:
             TaskCreate(
                 prompt="提取关键字段",
                 document_text="示例文书",
-                provider_hint=Provider.OPENCHAT,
+                provider_hint="openchat",
             )
         )
 
@@ -561,7 +561,7 @@ def test_scheduler_priority_mode_prefers_higher_priority() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-low-priority",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat-low",
             enabled=True,
             priority=200,
@@ -570,10 +570,10 @@ def test_scheduler_priority_mode_prefers_higher_priority() -> None:
     registry.register(
         SessionConfig(
             id="s-openchat-high-priority",
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             chat_url="https://example.com/openchat-high",
             enabled=True,
-            priority=1,
+            priority=10,
         )
     )
     registry.mark_ready("s-openchat-low-priority")
@@ -584,7 +584,7 @@ def test_scheduler_priority_mode_prefers_higher_priority() -> None:
         TaskCreate(
             prompt="提取关键字段",
             document_text="示例文书",
-            provider_hint=Provider.OPENCHAT,
+            provider_hint="openchat",
         )
     )
 

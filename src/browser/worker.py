@@ -8,21 +8,17 @@ from time import perf_counter
 from typing import Protocol
 from uuid import uuid4
 
-from src.browser.providers import (
-    DeepSeekAdapter,
-    GeminiAdapter,
-    GrokAdapter,
-    OpenChatAdapter,
-    ProviderAdapter,
-)
+from src.browser.providers import ProviderAdapter, OpenChatAdapter
+from src.storage.repositories import ProviderConfigRepository
 from src.browser.scheduler import DispatchDecision, WeightedRoundRobinScheduler
 from src.browser.session_pool import BrowserSessionPool, ProviderSessionPoolManager
-from src.models.session import Provider, SessionState
+from src.models.session import SessionState
 from src.models.task import TaskStatus
 from src.parser import JSONValidator, ResponseExtractor, RetryHandler
 from src.prompt import PromptGenerator
 from src.storage.repositories import LogRepository, SessionRepository, TaskRepository
-
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +47,7 @@ class PooledProviderTaskProcessor:
     def __init__(
         self,
         *,
-        provider: Provider,
+        provider: str,
         adapter: ProviderAdapter,
         session_repo: SessionRepository | None = None,
         task_repo: TaskRepository | None = None,
@@ -91,13 +87,13 @@ class PooledProviderTaskProcessor:
             "worker.process begin task_id=%s session_id=%s provider=%s attempt_no=%s",
             decision.task_id,
             decision.session_id,
-            decision.provider.value,
+            decision.provider,
             decision.attempt_no,
         )
         if decision.provider != self.provider:
             return ProcessResult(
                 ok=False,
-                error_message=f"unsupported provider for processor: {decision.provider.value}",
+                error_message=f"unsupported provider for processor: {decision.provider}",
                 permanent_failure=True,
             )
 
@@ -114,13 +110,13 @@ class PooledProviderTaskProcessor:
             logger.debug(
                 "worker.process get_page session_id=%s provider=%s url=%s",
                 session_row.id,
-                decision.provider.value,
+                decision.provider,
                 session_row.chat_url,
             )
             page = await self.session_pool.get_page(
                 session_id=session_row.id,
                 url=session_row.chat_url,
-                provider=decision.provider.value,
+                provider=decision.provider,
             )
             logger.debug(
                 "worker.process get_page done session_id=%s current_url=%s",
@@ -133,17 +129,17 @@ class PooledProviderTaskProcessor:
                 logger.info(
                     "worker.process page_state session_id=%s chat_ready=%s cookie_required=%s verification_required=%s login_required=%s",
                     session_row.id,
-                    getattr(page_state, "chat_ready", None),
-                    getattr(page_state, "cookie_required", None),
-                    getattr(page_state, "verification_required", None),
-                    getattr(page_state, "login_required", None),
+                    page_state.get("chat_ready", None),
+                    page_state.get("cookie_required", None),
+                    page_state.get("verification_required", None),
+                    page_state.get("login_required", None),
                 )
             else:
                 logger.debug("worker.process page_state unavailable session_id=%s", session_row.id)
 
             logged_in = await self.adapter.is_logged_in(page)
             if page_state is not None:
-                logged_in = page_state.chat_ready
+                logged_in = page_state.get("chat_ready", None)
             logger.info("worker.process login_decision session_id=%s logged_in=%s", session_row.id, logged_in)
 
             if not logged_in:
@@ -159,21 +155,21 @@ class PooledProviderTaskProcessor:
                 )
 
                 if page_state is not None:
-                    if page_state.cookie_required:
+                    if page_state.get("cookie_required", False):
                         login_message = (
                             "cookie consent required before login. "
                             "Please complete cookie/verification/login in opened browser, "
                             "then notify worker readiness via /admin/sessions (Mark Login OK) "
                             "or POST /api/sessions/{session_id}/notify-ready"
                         )
-                    elif page_state.verification_required:
+                    elif page_state.get("verification_required", False):
                         login_message = (
                             "human verification required (Cloudflare). "
                             "Please complete verification/login in the opened browser, "
                             "then notify worker readiness via /admin/sessions (Mark Login OK) "
                             "or POST /api/sessions/{session_id}/notify-ready"
                         )
-                    elif page_state.login_required:
+                    elif page_state.get("login_required", False):
                         login_message = (
                             "session login required. Please log in via opened browser, "
                             "then notify worker readiness via /admin/sessions (Mark Login OK) "
@@ -201,7 +197,7 @@ class PooledProviderTaskProcessor:
                 logger.warning(
                     "worker.process gate_wait_login session_id=%s provider=%s reason=%s",
                     session_row.id,
-                    decision.provider.value,
+                    decision.provider,
                     login_message,
                 )
                 return ProcessResult(
@@ -229,7 +225,7 @@ class PooledProviderTaskProcessor:
                 "worker.process exception task_id=%s session_id=%s provider=%s error=%s",
                 decision.task_id,
                 session_row.id,
-                decision.provider.value,
+                decision.provider,
                 error_message,
             )
             if self._is_login_gate_message(error_message):
@@ -255,11 +251,11 @@ class PooledProviderTaskProcessor:
                 "worker.process exception_reset_session task_id=%s session_id=%s provider=%s",
                 decision.task_id,
                 session_row.id,
-                decision.provider.value,
+                decision.provider,
             )
             await self.session_pool.reset_session(
                 session_row.id,
-                provider=decision.provider.value,
+                provider=decision.provider,
             )
             return ProcessResult(ok=False, error_message=error_message)
 
@@ -302,7 +298,7 @@ class OpenChatTaskProcessor(PooledProviderTaskProcessor):
         headless: bool | None = None,
     ) -> None:
         super().__init__(
-            provider=Provider.OPENCHAT,
+            provider="openchat",
             adapter=adapter or OpenChatAdapter(),
             session_repo=session_repo,
             task_repo=task_repo,
@@ -315,7 +311,7 @@ class OpenChatTaskProcessor(PooledProviderTaskProcessor):
 class MultiProviderTaskProcessor:
     def __init__(
         self,
-        processors: dict[Provider, TaskProcessor] | None = None,
+        processors: dict[str, TaskProcessor] | None = None,
         pool_manager: ProviderSessionPoolManager | None = None,
         session_repo: SessionRepository | None = None,
         task_repo: TaskRepository | None = None,
@@ -331,55 +327,38 @@ class MultiProviderTaskProcessor:
         self.session_repo = session_repo or SessionRepository()
         self.task_repo = task_repo or TaskRepository()
 
+        from src.browser.providers.base import DefaultProviderAdapter
+        def provider_adapter_factory(provider_name: str) -> ProviderAdapter:
+            # 统一返回 DefaultProviderAdapter，后续可用配置驱动
+            return DefaultProviderAdapter()
+
         if processors is not None:
             self.processors = processors
             return
 
-        self.processors = {
-            Provider.OPENCHAT: PooledProviderTaskProcessor(
-                provider=Provider.OPENCHAT,
-                adapter=OpenChatAdapter(),
+        # 动态注册所有 provider
+        provider_repo = ProviderConfigRepository()
+        provider_configs = provider_repo.list()
+        self.processors = {}
+        for provider in provider_configs:
+            name = provider.name
+            adapter = provider_adapter_factory(name)
+            self.processors[name] = PooledProviderTaskProcessor(
+                provider=name,
+                adapter=adapter,
                 session_repo=self.session_repo,
                 task_repo=self.task_repo,
-                session_pool=self.pool_manager.get_pool(Provider.OPENCHAT),
+                session_pool=self.pool_manager.get_pool(name),
                 timeout_ms=timeout_ms,
                 headless=is_headless,
-            ),
-            Provider.GEMINI: PooledProviderTaskProcessor(
-                provider=Provider.GEMINI,
-                adapter=GeminiAdapter(),
-                session_repo=self.session_repo,
-                task_repo=self.task_repo,
-                session_pool=self.pool_manager.get_pool(Provider.GEMINI),
-                timeout_ms=timeout_ms,
-                headless=is_headless,
-            ),
-            Provider.GROK: PooledProviderTaskProcessor(
-                provider=Provider.GROK,
-                adapter=GrokAdapter(),
-                session_repo=self.session_repo,
-                task_repo=self.task_repo,
-                session_pool=self.pool_manager.get_pool(Provider.GROK),
-                timeout_ms=timeout_ms,
-                headless=is_headless,
-            ),
-            Provider.DEEPSEEK: PooledProviderTaskProcessor(
-                provider=Provider.DEEPSEEK,
-                adapter=DeepSeekAdapter(),
-                session_repo=self.session_repo,
-                task_repo=self.task_repo,
-                session_pool=self.pool_manager.get_pool(Provider.DEEPSEEK),
-                timeout_ms=timeout_ms,
-                headless=is_headless,
-            ),
-        }
+            )
 
     async def process(self, decision: DispatchDecision) -> ProcessResult:
         processor = self.processors.get(decision.provider)
         if processor is None:
             return ProcessResult(
                 ok=False,
-                error_message=f"unsupported provider: {decision.provider.value}",
+                error_message=f"unsupported provider: {decision.provider}",
                 permanent_failure=True,
             )
         return await processor.process(decision)
@@ -591,3 +570,32 @@ class SchedulerWorker:
                 maybe_awaitable = close_fn()
                 if asyncio.iscoroutine(maybe_awaitable):
                     await maybe_awaitable
+
+
+# 线程池管理，每线程独占会话
+
+# 每个 provider 只分配一个线程，所有该 provider 的任务都分配到同一线程，避免同 provider 多窗口
+class ThreadedWorkerManager:
+    def __init__(self, providers: list[str]):
+        self.providers = providers
+        self.executor = ThreadPoolExecutor(max_workers=len(providers))
+        self.thread_local = threading.local()
+        # provider -> threading.Lock，保证同一 provider 的任务串行
+        self.provider_locks: dict[str, threading.Lock] = {p: threading.Lock() for p in providers}
+
+    def submit_task(self, session_id, url, provider, task_fn, *args, **kwargs):
+        lock = self.provider_locks[provider]
+        def thread_task(*args, **kwargs):
+            with lock:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                page = loop.run_until_complete(get_or_create_session(session_id, url, provider))
+                self.thread_local.page = page
+                return task_fn(page, *args, **kwargs)
+        return self.executor.submit(thread_task, *args, **kwargs)
+
+# 示例：任务函数
+def example_task(page, *args, **kwargs):
+    # 只操作本线程的 page
+    # ...业务逻辑...
+    return True

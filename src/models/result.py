@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from src.models.session import Provider
+
 
 
 class CaseStatus(str, Enum):
@@ -44,7 +44,7 @@ class LegalExtraction(BaseModel):
 class TaskResult(BaseModel):
     task_id: str
     status: str
-    provider: Optional[Provider] = None
+    provider: Optional[str] = None
     raw_response: Optional[str] = None
     extracted_json: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None

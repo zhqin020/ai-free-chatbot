@@ -73,7 +73,7 @@ def _build_task_payload(row: TaskORM) -> TaskPollRead:
 
 def _all_sessions_unhealthy_or_unavailable() -> bool:
     session_repo = SessionRepository()
-    sessions = session_repo.list(enabled_only=True)
+    sessions = session_repo.list()
     if not sessions:
         return True
     for s in sessions:
