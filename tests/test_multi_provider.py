@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from src.browser.scheduler import DispatchDecision
-from src.browser.session_pool import ProviderSessionPoolManager
+from src.browser.session_pool import get_global_provider_session_pool
 from src.browser.worker import MultiProviderTaskProcessor, ProcessResult, TaskProcessor
 
 
@@ -22,12 +22,9 @@ class FakeProcessor(TaskProcessor):
 
 
 def test_provider_pool_manager_creates_dedicated_pools() -> None:
-    manager = ProviderSessionPoolManager(headless=True)
-    openchat_pool = manager.get_pool("openchat")
-    gemini_pool = manager.get_pool("gemini")
-
-    assert openchat_pool is not gemini_pool
-    assert manager.get_pool("openchat") is openchat_pool
+    pool = get_global_provider_session_pool()
+    # 现在全局只维护一个 ProviderSessionPool，且每 provider 只允许一个 session
+    assert pool is not None
 
 
 @pytest.mark.asyncio

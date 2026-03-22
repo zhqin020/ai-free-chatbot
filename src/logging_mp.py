@@ -193,7 +193,7 @@ def setup_logging(
         # Config values
         log_level_str = log_cfg.get("level", "INFO").upper()
         log_level = getattr(logging, log_level_str, logging.INFO)
-        log_base = log_cfg.get("log_base", "qlib-")
+        log_base = log_cfg.get("log_base", "")
         log_file_tmpl = log_cfg.get("log_file", "<module.name>")
         max_index = int(log_cfg.get("max_index", 9))
         output_modes = [m.strip().lower() for m in log_cfg.get("output", "file, console").split(",")]
@@ -358,3 +358,7 @@ def startlog(name: str, **kwargs):
 def endlog(logger: logging.Logger, name: str):
     """Print footer."""
     addFooter(logger, name)
+
+
+if __name__ == "__main__":
+    logger = startlog(f'logger_test')

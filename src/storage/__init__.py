@@ -1,4 +1,4 @@
-from src.storage.database import (
+from .database import (
 	Base,
 	ExtractedResultORM,
 	ProviderConfigORM,
@@ -13,7 +13,7 @@ from src.storage.database import (
 	init_db,
 	session_scope,
 )
-from src.storage.repositories import (
+from .repositories import (
 	AttemptRepository,
 	ProviderConfigRepository,
 	SessionRepository,

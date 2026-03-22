@@ -22,15 +22,19 @@ class TaskCreate(BaseModel):
     external_id: Optional[str] = None
     prompt: str = Field(min_length=1)
     document_text: str = Field(min_length=1)
-    provider_hint: Optional[str] = None
+    owner: Optional[str] = None  # 新增
+    session_id: Optional[str] = None  # 新增
+    provider: Optional[str] = None  # 新增
 
 
 class TaskRead(BaseModel):
     id: str
     status: TaskStatus
     external_id: Optional[str] = None
-    provider_hint: Optional[str] = None
     latest_trace_id: Optional[str] = None
+    owner: Optional[str] = None  # 新增
+    session_id: Optional[str] = None  # 新增
+    provider: Optional[str] = None  # 新增
     created_at: datetime
     updated_at: datetime
 
@@ -38,8 +42,9 @@ class TaskRead(BaseModel):
 class TaskPollRead(BaseModel):
     id: str
     status: TaskStatus
+    owner: Optional[str] = None  # 新增
+    session_id: Optional[str] = None  # 新增
     external_id: Optional[str] = None
-    provider_hint: Optional[str] = None
     latest_trace_id: Optional[str] = None
     provider: Optional[str] = None
     raw_response: Optional[str] = None

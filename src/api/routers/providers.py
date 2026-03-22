@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.api.browser_open_service import open_page_in_server_browser
+
 from src.models.provider import (
     ProviderConfigCreate,
     ProviderConfigRead,
@@ -65,6 +65,9 @@ def create_provider(payload: ProviderConfigCreate) -> ProviderConfigRead:
     if row is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"provider already exists: {payload.name}")
     created = provider_repo.upsert(payload.name, url=payload.url, icon=payload.icon)
+    # 新增 provider 后自动 discover session，保持同步
+    from src.api.routers.sessions import discover_sessions
+    discover_sessions()
     return _to_read(created)
 
 
@@ -74,6 +77,9 @@ def update_provider(provider_name: str, payload: ProviderConfigUpdate) -> Provid
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"provider not found: {provider_name}")
     updated = provider_repo.upsert(provider_name, url=payload.url, icon=payload.icon)
+    # provider 更新后自动 discover session，保持同步
+    from src.api.routers.sessions import discover_sessions
+    discover_sessions()
     return _to_read(updated)
 
 
@@ -109,16 +115,27 @@ async def open_provider(provider_name: str) -> ProviderOpenResponse:
         browser_key = f"provider-{row.name}"
         browser_provider = row.name
 
-    opened, message = await open_page_in_server_browser(
-        key=browser_key,
-        url=row.url,
-        provider=browser_provider,
-    )
+    # 自动调用 worker API 拉起 provider 页面
+    import httpx
+    verify_req = {
+        "provider": browser_provider,
+        "session_id": browser_key,
+        "url": row.url,
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post("http://localhost:8000/api/worker/verify-session", json=verify_req)
+            data = resp.json()
+            open_message = data.get("message", "worker API 未返回结果")
+            opened = data.get("ok", False)
+    except Exception as exc:
+        open_message = f"worker API 调用失败: {exc}"
+        opened = False
     return ProviderOpenResponse(
         name=row.name,
         url=row.url,
         opened_in_server=opened,
-        open_message=message,
+        open_message=open_message,
     )
 
 
@@ -148,6 +165,6 @@ def provider_session_target(provider_name: str) -> ProviderSessionTargetResponse
 
     return ProviderSessionTargetResponse(
         name=row.name,
-        session_provider=mapped.value,
-        sessions_url=f"/admin/sessions?provider={mapped.value}",
+        session_provider=mapped,
+        sessions_url=f"/admin/sessions?provider={mapped}",
     )

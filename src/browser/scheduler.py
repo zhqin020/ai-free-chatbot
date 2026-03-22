@@ -23,6 +23,8 @@ class DispatchDecision:
     attempt_id: int
     attempt_no: int
     dispatched_at: datetime
+    prompt: str
+    document_text: str
 
 
 class WeightedRoundRobinScheduler:
@@ -33,6 +35,7 @@ class WeightedRoundRobinScheduler:
         attempt_repo: AttemptRepository | None = None,
         dispatch_config_repo: TaskDispatchConfigRepository | None = None,
         timeout_seconds: int = 30,
+        session_pool: object = None,
     ) -> None:
         self.session_repo = session_repo or SessionRepository()
         self.task_repo = task_repo or TaskRepository()
@@ -40,6 +43,7 @@ class WeightedRoundRobinScheduler:
         self.dispatch_config_repo = dispatch_config_repo or TaskDispatchConfigRepository()
         self.timeout_seconds = timeout_seconds
         self._cursor = 0
+        self.session_pool = session_pool
 
     def recover_timeouts(self) -> list[str]:
         return self.task_repo.recover_timeouts(
@@ -50,10 +54,6 @@ class WeightedRoundRobinScheduler:
         recovered = self.recover_timeouts()
         if recovered:
             pass
-
-        # Keep BUSY sessions from being stuck forever after process interruption.
-        self.session_repo.recover_stuck_busy_sessions(timeout_seconds=self.timeout_seconds)
-
         session_row = self._pick_next_ready_session()
         if session_row is None:
             return None
@@ -68,9 +68,8 @@ class WeightedRoundRobinScheduler:
             session_id=session_row.id,
             attempt_no=attempt_no,
         )
-        # 分配后立即更新 last_seen_at
-        self.session_repo.update_state(session_row.id, SessionState.BUSY)
-
+        # 分配后立即更新 last_seen_at（如需）
+        # 状态流转全部走 session_pool 内存
         return DispatchDecision(
             task_id=task_row.id,
             session_id=session_row.id,
@@ -78,6 +77,8 @@ class WeightedRoundRobinScheduler:
             attempt_id=attempt_row.id,
             attempt_no=attempt_no,
             dispatched_at=datetime.now(UTC),
+            prompt=task_row.prompt_text,
+            document_text=task_row.document_text,
         )
 
     def mark_attempt_success(self, task_id: str, session_id: str, attempt_id: int, latency_ms: int) -> None:
@@ -88,7 +89,7 @@ class WeightedRoundRobinScheduler:
             error_message=None,
         )
         self.task_repo.mark_status(task_id=task_id, status=TaskStatus.EXTRACTING)
-        self.session_repo.update_state(session_id, SessionState.READY, login_state="logged_in")
+        # 状态流转全部走 session_pool 内存
 
     def mark_attempt_failed(
         self,
@@ -112,11 +113,7 @@ class WeightedRoundRobinScheduler:
             or "chat window is not ready" in lowered
         ):
             self.task_repo.mark_status(task_id=task_id, status=TaskStatus.PENDING)
-            self.session_repo.update_state(
-                session_id,
-                SessionState.WAIT_LOGIN,
-                login_state="need_login",
-            )
+            # 状态流转全部走 session_pool 内存
         elif (
             "missing x server" in lowered
             or "$display" in lowered
@@ -132,44 +129,48 @@ class WeightedRoundRobinScheduler:
             or "timed out" in lowered
         ):
             self.task_repo.mark_status(task_id=task_id, status=TaskStatus.PENDING)
-            self.session_repo.update_state(
-                session_id,
-                SessionState.UNHEALTHY,
-                login_state="runtime_error",
-            )
+            # 状态流转全部走 session_pool 内存
         else:
             self.task_repo.mark_status(task_id=task_id, status=TaskStatus.FAILED)
-            self.session_repo.update_state(session_id, SessionState.READY)
+            # 状态流转全部走 session_pool 内存
 
     def _pick_next_ready_session(self) -> Optional[SessionORM]:
         all_sessions = self.session_repo.list()
         if not all_sessions:
             return None
 
-        ready_sessions = [
-            s
-            for s in all_sessions
-            if s.state == SessionState.READY
-        ]
+        # 只选内存 pool 中状态为 READY 的 session
+        ready_sessions = []
+        pool = self.session_pool
+        if pool is None:
+            raise RuntimeError("session_pool must be injected into WeightedRoundRobinScheduler")
+        for s in all_sessions:
+            key = s.provider  # provider 作为唯一 key，无需 make_key
+            entry = pool._entries.get(key)
+            if entry is not None:
+                if hasattr(entry.page, "is_unhealthy"):
+                    is_healthy = not (entry.page.is_closed() or getattr(entry.page, "is_unhealthy")())
+                else:
+                    is_healthy = not entry.page.is_closed()
+                if is_healthy:
+                    ready_sessions.append(s)
         if not ready_sessions:
             return None
 
         mode = self.dispatch_config_repo.get_mode()
         if mode == "priority":
-            pool: list[SessionORM] = []
+            pool_list: list[SessionORM] = []
             for row in ready_sessions:
                 weight = max(1, 201 - min(200, row.priority))
-                pool.extend([row] * weight)
-            if not pool:
+                pool_list.extend([row] * weight)
+            if not pool_list:
                 return None
-            idx = self._cursor % len(pool)
-            selected = pool[idx]
-            self._cursor = (self._cursor + 1) % len(pool)
+            idx = self._cursor % len(pool_list)
+            selected = pool_list[idx]
+            self._cursor = (self._cursor + 1) % len(pool_list)
             return selected
         else:
-            # 按 (last_seen_at, id) 升序排序，优先选择最久未服务的 session，若时间相同则按 id
             def session_sort_key(s):
-                # last_seen_at 为空时，使用 created_at
                 t = s.last_seen_at or s.created_at
                 return (t, s.id)
             sorted_sessions = sorted(ready_sessions, key=session_sort_key)

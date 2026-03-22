@@ -7,10 +7,10 @@ from uuid import uuid4
 
 from sqlalchemy import func, select
 
-from src.models.session import SessionConfig, SessionState
-from src.models.result import CaseStatus
-from src.models.task import TaskCreate, TaskStatus
-from src.storage.database import (
+from ..models.session import SessionConfig, SessionState
+from ..models.result import CaseStatus
+from ..models.task import TaskCreate, TaskStatus
+from .database import (
     ExtractedResultORM,
     ProviderConfigORM,
     RawResponseORM,
@@ -24,6 +24,15 @@ from src.storage.database import (
 
 
 class SessionRepository:
+    def update_chat_url(self, session_id: str, chat_url: str) -> bool:
+        with session_scope() as session:
+            row = session.get(SessionORM, session_id)
+            if row is None:
+                return False
+            row.chat_url = chat_url
+            row.updated_at = datetime.now(UTC)
+            session.flush()
+            return True
     def upsert(self, config: SessionConfig) -> SessionORM:
         with session_scope() as session:
             row = session.get(SessionORM, config.id)
@@ -32,8 +41,6 @@ class SessionRepository:
                     id=config.id,
                     provider=config.provider,
                     chat_url=config.chat_url,
-                    state=SessionState.READY,
-                    login_state="unknown",
                 )
                 session.add(row)
             else:
@@ -64,18 +71,7 @@ class SessionRepository:
             session.flush()
             return True
 
-    def update_state(self, session_id: str, state: SessionState, login_state: Optional[str] = None) -> bool:
-        with session_scope() as session:
-            row = session.get(SessionORM, session_id)
-            if row is None:
-                return False
-            row.state = state
-            if login_state is not None:
-                row.login_state = login_state
-            row.last_seen_at = datetime.now(UTC)
-            row.updated_at = datetime.now(UTC)
-            session.flush()
-            return True
+    # 已移除 update_state，所有会话状态仅内存维护
 
     def delete(self, session_id: str) -> bool:
         with session_scope() as session:
@@ -148,7 +144,10 @@ class TaskRepository:
                 status=TaskStatus.PENDING,
                 prompt_text=payload.prompt,
                 document_text=payload.document_text,
-                provider_hint=payload.provider_hint,
+                # provider_hint 字段已废弃
+                owner=payload.owner,
+                session_id=payload.session_id,
+                provider=payload.provider,
                 created_at=now,
                 updated_at=now,
             )
@@ -160,14 +159,11 @@ class TaskRepository:
         with session_scope() as session:
             return session.get(TaskORM, task_id)
 
-    def claim_next_pending(self, provider_hint: Optional[str] = None) -> Optional[TaskORM]:
+    def claim_next_pending(self, owner: Optional[str] = None) -> Optional[TaskORM]:
         with session_scope() as session:
             stmt = select(TaskORM).where(TaskORM.status == TaskStatus.PENDING)
-            if provider_hint is not None:
-                stmt = stmt.where(
-                    (TaskORM.provider_hint.is_(None)) | (TaskORM.provider_hint == provider_hint)
-                )
-
+            if owner is not None:
+                stmt = stmt.where(TaskORM.owner == owner)
             row = session.execute(stmt.order_by(TaskORM.created_at.asc())).scalars().first()
             if row is None:
                 return None
@@ -295,6 +291,9 @@ class TaskRepository:
 
 class ProviderConfigRepository:
     def update_ready_selectors(self, name: str, selectors: dict) -> bool:
+        from src import logging_mp
+        logger = logging_mp.get_logger("storage.repositories")
+        logger.info(f"[update_ready_selectors] provider={name} selectors={selectors}")
         """
         更新 provider 的 ready_selectors_json 字段，selectors 为 dict，将以 JSON 字符串存储。
         """

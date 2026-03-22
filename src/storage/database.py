@@ -7,10 +7,10 @@ from typing import Generator
 from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
-from src.config import get_settings
-from src.models.result import CaseStatus
-from src.models.session import SessionState
-from src.models.task import TaskStatus
+from ..config import get_settings
+from ..models.result import CaseStatus
+ 
+from ..models.task import TaskStatus
 
 
 class Base(DeclarativeBase):
@@ -25,14 +25,13 @@ class SessionORM(Base):
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(ForeignKey("provider_configs.name"), nullable=False)
     chat_url: Mapped[str] = mapped_column(Text, nullable=False)
     http_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    state: Mapped[SessionState] = mapped_column(
-        Enum(SessionState, native_enum=False), default=SessionState.READY, nullable=False
-    )
-    login_state: Mapped[str] = mapped_column(String(32), default="unknown", nullable=False)
+    # 已移除 state/login_state 字段，所有会话状态仅内存维护
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 新增：优先级字段，默认100，支持 session 调度
+    priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -41,6 +40,11 @@ class SessionORM(Base):
     )
 
     attempts: Mapped[list[TaskAttemptORM]] = relationship(back_populates="session")
+    # 新增：与 TaskORM 的一对多关系
+    tasks: Mapped[list[TaskORM]] = relationship("TaskORM", back_populates="session")
+
+    # 新增：与 ProviderConfigORM 的多对一关系
+    provider_config: Mapped[ProviderConfigORM] = relationship("ProviderConfigORM", back_populates="sessions", foreign_keys=[provider])
 
 
 class ProviderConfigORM(Base):
@@ -53,12 +57,20 @@ class ProviderConfigORM(Base):
     # 新增：用于存储 chat ready 页面特征（selectors），JSON 字符串
     ready_selectors_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # 新增：优先级字段，默认100，可按Provider分配
+    priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+
+    # 新增：与 TaskORM 的一对多关系
+    tasks: Mapped[list[TaskORM]] = relationship("TaskORM", back_populates="provider_config")
+    # 新增：与 SessionORM 的一对多关系
+    sessions: Mapped[list[SessionORM]] = relationship("SessionORM", back_populates="provider_config")
 
 
 class TaskDispatchConfigORM(Base):
@@ -84,11 +96,13 @@ class TaskORM(Base):
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus, native_enum=False), default=TaskStatus.PENDING, nullable=False
     )
+    # 新增：任务归属线程/worker
+    owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("sessions.id"), nullable=True)  # 新增，允许为 None
     prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
     document_text: Mapped[str] = mapped_column(Text, nullable=False)
-    provider_hint: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
+    provider: Mapped[str | None] = mapped_column(ForeignKey("provider_configs.name"), nullable=True)  # 新增，允许为 None
+    # provider_hint 字段已废弃，彻底移除
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -99,6 +113,12 @@ class TaskORM(Base):
     attempts: Mapped[list[TaskAttemptORM]] = relationship(back_populates="task")
     raw_responses: Mapped[list[RawResponseORM]] = relationship(back_populates="task")
     extracted_results: Mapped[list[ExtractedResultORM]] = relationship(back_populates="task")
+
+    # 新增：与 SessionORM 的多对一关系
+    session: Mapped[SessionORM | None] = relationship("SessionORM", back_populates="tasks", foreign_keys=[session_id])
+
+    # 新增：与 ProviderConfigORM 的多对一关系
+    provider_config: Mapped[ProviderConfigORM | None] = relationship("ProviderConfigORM", back_populates="tasks", foreign_keys=[provider])
 
 
 class TaskAttemptORM(Base):

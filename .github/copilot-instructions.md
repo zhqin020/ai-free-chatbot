@@ -36,3 +36,6 @@ mkdir -p docs logs issues tests data tmp src
 	- 在该 issue 文件中写明解决摘要，并将状态字段改为 `closed`。
 	- 在相关代码提交（commit message）中引用该 issue 文件名，例如：`Fix: adjust replay buffer (issues/003-replay-buffer.md)`。
 	- 关联的问题应该在同一文件下追加问题记录，处理过程和结果，同一问题不要重复创建 issue 文件。
+
+日志功能：
+必须在代码中添加足够的调试和跟踪日志，日志需要输出到日志和控制台。优先使用 src/logging_mp.py 模块

@@ -1,81 +1,56 @@
-# 任务状态机（超简版）
 
-目标：把客户端与 worker 的协作收敛为最小闭环，降低失败点。
+# 任务与会话状态机（2026架构梳理版）
 
 ## 设计原则
 
 1. 客户端只做两件事：创建任务、轮询状态。
-2. 服务端不在创建任务时做 provider 健康检查。
-3. worker 对 provider 响应只做 JSON 合法性判断。
-4. 失败后不自动重试；是否重试由客户端自行决定（重新创建任务）。
+2. 服务端任务分发与会话状态解耦，worker 只消费 READY 会话。
+3. 任务失败不自动重试，重试由客户端决定。
+4. 会话状态严格区分 READY/BUSY/WAIT_LOGIN/UNHEALTHY，调度只分配 READY。
 
-## API 最小闭环
+## 任务状态（TaskStatus）
 
-1. 创建任务
-- 接口：POST /api/tasks
-- 入参：prompt、document_text、provider_hint（可选）
-- 返回：task_id、status=PENDING
+- PENDING：任务已入队，等待分发。
+- DISPATCHED：worker 已认领，正在执行。
+- EXTRACTING：收到 provider 响应，做 JSON 提取。
+- COMPLETED：提取到合法 JSON，任务完成。
+- FAILED：处理失败（超时、页面未就绪、响应非 JSON、解析失败）。
 
-2. 轮询任务（已合并结果）
-- 接口：GET /api/tasks/{task_id}
-- 返回字段：
-  - status
-  - latest_trace_id
-  - raw_response
-  - extracted_json（仅保证是可解析 JSON 对象）
-  - error_message
+## 会话状态（SessionState）
 
-3. 兼容接口（可选）
-- 接口：GET /api/tasks/{task_id}/result
-- 说明：为兼容旧客户端保留；新客户端可只使用 GET /api/tasks/{task_id}
+- READY：可用，允许分配任务。
+- BUSY：已分配任务，未完成前不可再分配。
+- WAIT_LOGIN：需人工登录/验证。
+- UNHEALTHY：不可用，需人工干预。
+- RECOVERING：自动恢复中。
 
-## 状态定义（任务）
+## 状态流转链路
 
-1. PENDING：已入队，等待 worker 处理。
-2. DISPATCHED：worker 已认领任务，正在执行。
-3. EXTRACTING：收到 provider 文本响应，正在做 JSON 提取。
-4. COMPLETED：提取到合法 JSON，任务完成。
-5. FAILED：处理失败（含超时、页面未就绪、响应非 JSON、解析失败）。
-
-说明：当前策略为失败终态，不会自动回到 PENDING。
-
-## 状态流转
+### 任务流转
 
 1. 创建任务：PENDING
-2. worker 认领：PENDING -> DISPATCHED
-3. provider 返回文本：DISPATCHED -> EXTRACTING
-4. 文本中可提取合法 JSON：EXTRACTING -> COMPLETED
-5. 任一步失败：DISPATCHED/EXTRACTING -> FAILED
+2. 调度分配 READY 会话：PENDING → DISPATCHED，session.state: READY → BUSY
+3. worker 执行任务，收到 provider 响应：DISPATCHED → EXTRACTING
+4. JSON 提取成功：EXTRACTING → COMPLETED，session.state: BUSY → READY
+5. 任一步失败：DISPATCHED/EXTRACTING → FAILED，session.state: BUSY → READY/WAIT_LOGIN/UNHEALTHY（视失败类型）
 
-## 客户端建议流程
+### 会话流转
 
-1. 调用 POST /api/tasks 创建任务。
-2. 每 1 到 2 秒轮询 GET /api/tasks/{task_id}。
-3. 当 status 为 COMPLETED 或 FAILED 时停止轮询。
-4. 直接从轮询响应读取 raw_response、extracted_json、error_message。
-5. 若 status=FAILED 且业务需要重试：客户端重新创建新任务。
+- READY → BUSY：被调度分配任务时
+- BUSY → READY：任务完成或失败（非致命错误）
+- BUSY → WAIT_LOGIN：遇到登录/验证/人工干预需求
+- BUSY → UNHEALTHY：遇到致命运行时错误
+- WAIT_LOGIN/UNHEALTHY → READY：人工干预后恢复
 
-## 服务端简化后的职责边界
+## 关键实现要点
 
-1. API 层：只负责接收任务、返回任务状态与结果。
-2. 调度层：只负责分配 READY 会话和任务状态推进。
-3. 执行层（worker）：只负责发送消息、拿回文本、判断是否可提取 JSON。
-4. 重试策略：不在服务端自动执行。
+- 只有 READY 会话可被调度，BUSY/WAIT_LOGIN/UNHEALTHY 均不可分配。
+- worker 任务完成/失败后，必须显式回写 session 状态（见 scheduler.mark_attempt_success/failed）。
+- recover_stuck_busy_sessions 定期将长时间 BUSY 的会话恢复为 READY，防止死锁。
+- 任务状态推进与会话状态推进解耦，任何异常都应保证最终 session 状态可恢复。
 
-## 常见卡点（最简排查）
+## 常见问题与排查
 
-1. 任务一直 PENDING
-- worker 未运行，或没有 READY 会话。
-
-2. 任务直接 FAILED
-- provider 页未就绪（登录/验证未完成）。
-- provider 无响应或超时。
-- 响应里没有可提取 JSON 对象。
-
-3. latest_trace_id 为空
-- 任务尚未进入派发阶段（worker 没有真正消费到该任务）。
-
-## 兼容性说明
-
-1. extracted_json 已放宽为通用 JSON 对象，不再要求固定字段 schema。
-2. retry_count 字段保留用于历史兼容与观测，不代表服务端自动重试行为。
+- 任务一直 PENDING：无 READY 会话或 worker 未运行。
+- 任务直接 FAILED：会话 WAIT_LOGIN/UNHEALTHY，或 provider 响应异常。
+- 会话卡 BUSY：worker 异常未回写状态，或进程崩溃，需 recover_stuck_busy_sessions 兜底。

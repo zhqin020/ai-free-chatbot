@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from src.api.browser_open_service import open_page_in_server_browser
+
 
 router = APIRouter(prefix="/api/mock-openai", tags=["mock-openai"])
 
@@ -327,13 +327,9 @@ async def open_mock_openai_browser(
     port: int = Query(default=8010, ge=1, le=65535),
 ) -> MockOpenAIOpenResponse:
     url = f"http://{host}:{port}/"
-    opened, message = await open_page_in_server_browser(
-        key="s-mock_openai-1",
-        url=url,
-        provider="openchat",
-    )
+    # 浏览器操作已禁用，统一由 worker 进程管理
     return MockOpenAIOpenResponse(
         url=url,
-        opened_in_server=opened,
-        open_message=message,
+        opened_in_server=False,
+        open_message="浏览器操作已禁用，请通过 worker API 进行页面管理。",
     )

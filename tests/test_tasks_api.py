@@ -10,8 +10,11 @@ from fastapi.testclient import TestClient
 from src.config import reset_settings_cache
 
 from src.models.task import TaskStatus
+
 from src.storage.repositories import TaskRepository
-from src.storage.database import init_db
+from src.storage.database import init_db, session_scope, ProviderConfigORM, SessionORM
+from src.models.provider import ProviderConfigRead
+
 
 
 @pytest.fixture
@@ -25,9 +28,52 @@ def client() -> Iterator[TestClient]:
     reset_settings_cache()
     init_db()
 
-    from src.api.main import create_app
 
-    with TestClient(create_app()) as test_client:
+    # 自动插入 provider_config 和 session，确保 session_pool 不为空
+    with session_scope() as session:
+        # 插入 provider_config
+        if not session.query(ProviderConfigORM).filter_by(name=ProviderConfigRead.value).first():
+            session.add(ProviderConfigORM(
+                name=ProviderConfigRead.value,
+                url="https://chat.openchat.com/",
+                icon="/static/openchat.png",
+            ))
+        # 插入 session
+        if not session.query(SessionORM).filter_by(id="s-openchat-1").first():
+            session.add(SessionORM(
+                id="s-openchat-1",
+                provider=ProviderConfigRead.value,
+                chat_url="https://chat.openchat.com/",
+                http_session_id=None,
+                priority=100,
+            ))
+        session.flush()
+
+    from src.api.main import create_app
+    app = create_app()
+
+    # mock session_pool，插入一个伪 READY session
+    class DummyPage:
+        def is_closed(self):
+            return False
+        def __getattr__(self, name):
+            # 兼容 is_unhealthy
+            return lambda *a, **kw: False
+
+    class DummyEntry:
+        def __init__(self):
+            self.session_id = "s-openchat-1"
+            self.provider = "openchat"
+            self.thread_id = 123456
+            self.page = DummyPage()
+
+    class DummySessionPool:
+        def __init__(self):
+            self._entries = {"openchat": DummyEntry()}
+
+    app.state.session_pool = DummySessionPool()
+
+    with TestClient(app) as test_client:
         yield test_client
 
 
@@ -128,7 +174,7 @@ def test_get_task_result_with_parsed_raw_response(client: TestClient) -> None:
     repo = TaskRepository()
     repo.save_raw_response(
         task_id=task_id,
-        provider=Provider.OPENCHAT,
+        provider=ProviderConfigRead.OPENCHAT,
         response_text=(
             '{"case_id":"IMM-3-24","case_status":"Closed","judgment_result":"dismiss",'
             '"hearing":"false","timeline":{"filing_date":"2024-01-01"}}'
@@ -162,7 +208,7 @@ def test_get_task_by_id_includes_result_when_completed(client: TestClient) -> No
     repo = TaskRepository()
     repo.save_raw_response(
         task_id=task_id,
-        provider=Provider.OPENCHAT,
+        provider=ProviderConfigRead.OPENCHAT,
         response_text='{"ok":true,"case_id":"A-1"}',
     )
     repo.mark_status(task_id, TaskStatus.COMPLETED)

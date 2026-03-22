@@ -3,6 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.browser.worker import SchedulerWorker
 from src.config import get_settings
 from src.logging_mp import setup_logging
@@ -10,7 +14,9 @@ from src.storage.database import init_db
 
 
 async def _main(max_loops: int | None) -> None:
-    worker = SchedulerWorker()
+    from src.browser.session_pool import get_global_provider_session_pool
+    session_pool = get_global_provider_session_pool()
+    worker = SchedulerWorker(session_pool=session_pool)
     await worker.run_forever(stop_after=max_loops)
 
 

@@ -1,12 +1,12 @@
-from src.models.result import CaseStatus, LegalExtraction, TaskResult, Timeline
-from src.models.session import (
+from .result import CaseStatus, LegalExtraction, TaskResult, Timeline
+from .session import (
     SessionConfig,
     SessionRead,
     SessionState,
     SessionStatus,
     SessionUpdate,
 )
-from src.models.task import TaskCreate, TaskRead, TaskStatus
+from .task import TaskCreate, TaskRead, TaskStatus
 
 __all__ = [
 	"CaseStatus",

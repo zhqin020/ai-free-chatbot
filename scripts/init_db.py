@@ -26,7 +26,7 @@ def main() -> None:
             + '","output":"file, console","log_file":"init_db"}'
         ),
     )
-    print("[INFO] 正在初始化数据库表结构。当前系统仅保留 sessions 主表，已无 session_name、enabled 字段，也无 session_tracking 表。")
+    print("[INFO] 正在初始化数据库表结构。当前系统仅保留 sessions 主表，已无 session_name、enabled、state、login_state 字段，也无 session_tracking 表。")
     print("[INFO] 如果你是从旧版本升级，需依次运行：\n"
         "  scripts/migrate_sessions_provider_to_string.sql\n"
         "  scripts/migrate_sessions_table.sql\n"

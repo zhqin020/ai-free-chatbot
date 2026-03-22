@@ -1,4 +1,117 @@
-from __future__ import annotations
+
+from fastapi import Body, Query
+from fastapi import APIRouter
+from pydantic import BaseModel
+from src.storage.repositories import SessionRepository
+from src.browser.session_pool import get_global_provider_session_pool
+
+from src.logging_mp import setup_logging, startlog
+logger = startlog('routers.worker')
+
+# 注册 worker 路由
+router = APIRouter(prefix="/api/worker", tags=["worker"])
+
+# 会话验证请求模型
+class VerifySessionRequest(BaseModel):
+    provider: str
+    session_id: str
+    url: str
+
+# 会话验证响应模型
+class VerifySessionResponse(BaseModel):
+    ok: bool
+    message: str
+    session_id: str
+    provider: str
+    url: str
+
+
+from src.browser.worker import WorkerCommand, WorkerCommandResult, put_command, get_command_result
+import uuid
+
+
+@router.post("/verify-session", response_model=VerifySessionResponse)
+async def verify_session(req: VerifySessionRequest = Body(...)) -> VerifySessionResponse:
+    """
+    由 worker 线程处理页面操作，API 线程仅写入命令队列并等待结果。
+    无论 session 是否存在，均下发 verify_session 命令，由 worker 线程自动拉起/修复 session 并写入 owner。
+    """
+    try:
+        # 1. 查询 session 记录，若无 owner 则选择 provider 对应的 worker 线程
+        session_repo = SessionRepository()
+        session_row = session_repo.get(req.session_id)
+        if session_row and getattr(session_row, 'owner', None):
+            target_thread_id = str(session_row.owner)
+        else:
+            # 若无 session 或 owner，按 provider 选择第一个可用 worker 线程（可优化为 provider->thread 映射）
+            # 这里假设 provider 名称等于 thread_id 或有映射关系
+            # 实际可维护 provider->thread_id 映射表
+            from threading import enumerate as thread_enumerate
+            threads = list(thread_enumerate())
+            # 简单策略：取第一个非主线程
+            target_thread_id = None
+            for t in threads:
+                if getattr(t, 'ident', None) and t.name != 'MainThread':
+                    target_thread_id = str(t.ident)
+                    break
+            if not target_thread_id:
+                return VerifySessionResponse(
+                    ok=False,
+                    message="无可用 worker 线程，无法分配 session owner",
+                    session_id=req.session_id,
+                    provider=req.provider,
+                    url=req.url,
+                )
+        command_id = uuid.uuid4().hex
+        command = WorkerCommand(
+            command_id=command_id,
+            command_type="verify_session",
+            params={
+                "provider": req.provider,
+                "session_id": req.session_id,
+                "url": req.url,
+            },
+            target_thread_id=target_thread_id,
+            session_id=req.session_id,
+        )
+        put_command(command)
+        logger.info(f"[worker] verify-session enqueued: command_id={command_id} target_thread_id={target_thread_id}")
+        # 2. 阻塞等待 worker 线程处理结果
+        result: WorkerCommandResult | None = get_command_result(command_id, timeout=10.0)
+        if result is None:
+            return VerifySessionResponse(
+                ok=False,
+                message="worker 线程处理超时或无响应",
+                session_id=req.session_id,
+                provider=req.provider,
+                url=req.url,
+            )
+        if result.status == "success":
+            return VerifySessionResponse(
+                ok=True,
+                message="会话页面已由 worker 线程创建/激活，可复用",
+                session_id=req.session_id,
+                provider=req.provider,
+                url=req.url,
+            )
+        else:
+            return VerifySessionResponse(
+                ok=False,
+                message=result.error_message or "worker 线程处理失败",
+                session_id=req.session_id,
+                provider=req.provider,
+                url=req.url,
+            )
+    except Exception as exc:
+        logger.error(f"[worker] verify-session error: {exc}")
+        return VerifySessionResponse(
+            ok=False,
+            message=f"worker verify-session 异常: {exc}",
+            session_id=req.session_id,
+            provider=req.provider,
+            url=req.url,
+        )
+
 
 import json
 import os
@@ -10,10 +123,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
-
-router = APIRouter(prefix="/api/worker", tags=["worker"])
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TMP_DIR = _REPO_ROOT / "tmp"
@@ -38,222 +147,26 @@ class WorkerActionResponse(BaseModel):
     status: WorkerStatusResponse
 
 
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
 
 
-def _is_pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
 
-    # Zombie process should be treated as not running for management decisions.
-    stat_path = Path(f"/proc/{pid}/stat")
-    if stat_path.exists():
-        try:
-            stat_text = stat_path.read_text(encoding="utf-8", errors="ignore")
-            parts = stat_text.split()
-            if len(parts) >= 3 and parts[2] == "Z":
-                return False
-        except Exception:
-            pass
+from fastapi import Query
+from typing import List
 
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+class SessionPoolEntryInfo(BaseModel):
+    key: str
+    url: str
+    thread_id: int
 
-
-def _read_state() -> dict[str, object] | None:
-    if not _STATE_FILE.exists():
-        return None
-    try:
-        return json.loads(_STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-
-def _write_state(*, pid: int, started_at: datetime, command: str) -> None:
-    _TMP_DIR.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "pid": pid,
-        "started_at": started_at.isoformat(),
-        "command": command,
-        "managed_by_api": True,
-    }
-    _STATE_FILE.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-
-
-def _clear_state() -> None:
-    if _STATE_FILE.exists():
-        _STATE_FILE.unlink()
-
-
-def _parse_started_at(value: object) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except Exception:
-        return None
-
-
-def _find_worker_pids() -> list[int]:
-    found: list[int] = []
-    proc_root = Path("/proc")
-    if not proc_root.exists():
-        return found
-
-    for pid_dir in proc_root.iterdir():
-        if not pid_dir.name.isdigit():
-            continue
-        pid = int(pid_dir.name)
-        cmdline_path = pid_dir / "cmdline"
-        try:
-            raw = cmdline_path.read_bytes()
-        except Exception:
-            continue
-
-        if not raw:
-            continue
-        text = raw.decode("utf-8", errors="ignore").replace("\x00", " ")
-        if "scripts.run_worker" in text:
-            found.append(pid)
-
-    found.sort()
-    return found
-
-
-def _collect_worker_status() -> WorkerStatusResponse:
-    state = _read_state()
-    if state is not None:
-        pid = int(state.get("pid", 0))
-        if _is_pid_alive(pid):
-            started_at = _parse_started_at(state.get("started_at"))
-            uptime = None
-            if started_at is not None:
-                uptime = max(0, int((_now_utc() - started_at).total_seconds()))
-            return WorkerStatusResponse(
-                running=True,
-                pid=pid,
-                managed_by_api=bool(state.get("managed_by_api", True)),
-                started_at=started_at,
-                uptime_seconds=uptime,
-                command=str(state.get("command", "python -m scripts.run_worker")),
-                message="worker is running",
-            )
-        _clear_state()
-
-    pids = _find_worker_pids()
-    if pids:
-        return WorkerStatusResponse(
-            running=True,
-            pid=pids[0],
-            managed_by_api=False,
-            started_at=None,
-            uptime_seconds=None,
-            command="python -m scripts.run_worker",
-            message="worker is running (not managed by api)",
-        )
-
-    return WorkerStatusResponse(running=False, message="worker is not running")
-
-
-def _start_managed_worker() -> WorkerStatusResponse:
-    current = _collect_worker_status()
-    if current.running:
-        return WorkerStatusResponse(
-            **current.model_dump(),
-            message="worker already running",
-        )
-
-    cmd = [sys.executable, "-m", "scripts.run_worker"]
-    env = os.environ.copy()
-    env.setdefault("PYTHONUNBUFFERED", "1")
-
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with _WORKER_LOG_FILE.open("ab") as log_fp:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=_REPO_ROOT,
-            env=env,
-            stdout=log_fp,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-
-    started_at = _now_utc()
-    _write_state(
-        pid=proc.pid,
-        started_at=started_at,
-        command=" ".join(cmd),
-    )
-    time.sleep(0.15)
-
-    return _collect_worker_status()
-
-
-def _terminate_pid(pid: int, force: bool) -> None:
-    if not _is_pid_alive(pid):
-        return
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-
-    deadline = time.monotonic() + 8
-    while time.monotonic() < deadline:
-        if not _is_pid_alive(pid):
-            return
-        time.sleep(0.2)
-
-    if force and _is_pid_alive(pid):
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-
-
-def _stop_active_worker(force: bool) -> WorkerStatusResponse:
-    current = _collect_worker_status()
-    if not current.running or current.pid is None:
-        return WorkerStatusResponse(running=False, message="worker is not running")
-
-    # If worker is managed by API, stop tracked pid only; otherwise stop all discovered worker pids.
-    if current.managed_by_api:
-        target_pids = [current.pid]
-    else:
-        target_pids = _find_worker_pids()
-        if not target_pids:
-            target_pids = [current.pid]
-
-    for pid in target_pids:
-        _terminate_pid(pid, force=force)
-
-    if not _is_pid_alive(current.pid):
-        _clear_state()
-    return _collect_worker_status()
-
-
-@router.get("/status", response_model=WorkerStatusResponse)
-def get_worker_status() -> WorkerStatusResponse:
-    with _STATE_LOCK:
-        return _collect_worker_status()
-
-
-@router.post("/start", response_model=WorkerActionResponse)
-def start_worker() -> WorkerActionResponse:
-    with _STATE_LOCK:
-        status = _start_managed_worker()
-    return WorkerActionResponse(action="start", status=status)
-
-
-@router.post("/stop", response_model=WorkerActionResponse)
-def stop_worker(
-    force: bool = Query(default=True, description="Force SIGKILL when SIGTERM timeout"),
-) -> WorkerActionResponse:
-    with _STATE_LOCK:
-        status = _stop_active_worker(force=force)
-    return WorkerActionResponse(action="stop", status=status)
+@router.get("/session-pool-entries", response_model=List[SessionPoolEntryInfo])
+def get_session_pool_entries(provider: str = Query(None)) -> List[SessionPoolEntryInfo]:
+    """
+    查询当前 worker 进程内存中的 session pool entries
+    """
+    pool = get_global_provider_session_pool()
+    logger.info(f"[worker] session-pool-entries called: provider={provider}, entries={list(pool._entries.keys())}")
+    entries = []
+    for key, entry in pool._entries.items():
+        if provider is None or key.startswith(f"{provider}:"):
+            entries.append(SessionPoolEntryInfo(key=key, url=entry.url, thread_id=entry.thread_id))
+    return entries

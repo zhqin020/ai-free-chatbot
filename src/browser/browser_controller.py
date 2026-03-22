@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-import logging
+ 
 import os
 from pathlib import Path
 from typing import Literal, Optional
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
+from src.logging_mp import setup_logging, startlog
 
-BrowserType = Literal["chromium", "firefox", "webkit"]
-logger = logging.getLogger(__name__)
+logger = startlog(__name__) 
+
+BrowserType = Literal["chromium", "firefox", "webkit"] 
+
 
 
 class BrowserController:
@@ -69,29 +72,49 @@ class BrowserController:
             profile_dir = Path(user_data_dir)
             profile_dir.mkdir(parents=True, exist_ok=True)
             logger.debug("browser.start using persistent context profile_dir=%s", profile_dir)
-            try:
-                self._context = await launch_fn.launch_persistent_context(
-                    user_data_dir=str(profile_dir),
-                    **launch_args,
-                )
-                self._persistent_context = True
-                self._browser = None
-                logger.debug("browser.start completed persistent=%s", self._persistent_context)
-                return
-            except Exception as exc:
-                error_text = str(exc)
-                if (
-                    "Opening in existing browser session" in error_text
-                    or "Target page, context or browser has been closed" in error_text
-                ):
-                    logger.warning(
-                        "browser.start persistent launch failed due to profile lock; "
-                        "fallback to non-persistent context profile_dir=%s error=%s",
-                        profile_dir,
-                        error_text,
+            persistent_attempts = 0
+            while persistent_attempts < 2:
+                try:
+                    self._context = await launch_fn.launch_persistent_context(
+                        user_data_dir=str(profile_dir),
+                        **launch_args,
                     )
-                else:
-                    raise
+                    self._persistent_context = True
+                    self._browser = None
+                    logger.debug("browser.start completed persistent=%s", self._persistent_context)
+                    return
+                except Exception as exc:
+                    error_text = str(exc)
+                    if (
+                        "Opening in existing browser session" in error_text
+                        or "Target page, context or browser has been closed" in error_text
+                    ):
+                        logger.warning(
+                            "browser.start persistent launch failed due to profile lock; profile_dir=%s error=%s attempt=%d",
+                            profile_dir,
+                            error_text,
+                            persistent_attempts+1
+                        )
+                        # 清理 profile 目录下的锁文件后重试一次
+                        lock_file = profile_dir / "SingletonLock"
+                        if lock_file.exists():
+                            try:
+                                lock_file.unlink()
+                                logger.info("browser.start removed profile lock file: %s", lock_file)
+                            except Exception as e:
+                                logger.warning("browser.start failed to remove lock file: %s error: %s", lock_file, e)
+                        # 也可清理其它常见锁文件
+                        for extra_lock in profile_dir.glob("*.lock"):
+                            try:
+                                extra_lock.unlink()
+                                logger.info("browser.start removed extra lock file: %s", extra_lock)
+                            except Exception as e:
+                                logger.warning("browser.start failed to remove extra lock file: %s error: %s", extra_lock, e)
+                        persistent_attempts += 1
+                        continue
+                    else:
+                        raise
+                break
 
         self._browser = await launch_fn.launch(**launch_args)
         self._persistent_context = False
