@@ -17,7 +17,7 @@ def _compact_result(payload: Any) -> Any:
 
     raw_response = payload.get("raw_response")
     return {
-        "task_id": payload.get("task_id"),
+        "task_id": payload.get("task_id") or payload.get("id"),
         "status": payload.get("status"),
         "provider": payload.get("provider"),
         "retry_count": payload.get("retry_count"),

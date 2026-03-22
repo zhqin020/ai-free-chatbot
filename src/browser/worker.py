@@ -263,7 +263,8 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
         selectors["new_chat_selector"] = new_chat_found[0]
         selectors["new_chat_selector_candidates"] = new_chat_found
 
-    # 回复区域（assistant/message/reply）
+
+    # 回复区域（assistant/message/reply）增强：优先检测 .ds-message 结构
     reply_candidates = [
         "[data-testid='assistant-message']",
         "div.message.assistant",
@@ -272,12 +273,43 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
         "div[role='log']",
         "div[aria-live]",
         "article",
+        ".ds-message .ds-markdown-paragraph",
+        ".ds-message:last-of-type .ds-markdown-paragraph",
+        "div.ds-message:last-of-type div.ds-markdown > p.ds-markdown-paragraph",
         "p.ds-markdown-paragraph",
         "p[class*='markdown']",
     ]
     reply_found = []
     best_selector = None
     best_text = ""
+    # 优先检测唯一结构
+    try:
+        msg_count = await page.locator('.ds-message').count()
+        if msg_count > 0:
+            # 检查 .ds-message:last-of-type .ds-markdown-paragraph 是否可见且有内容
+            el = page.locator('.ds-message:last-of-type .ds-markdown-paragraph')
+            if await el.first.is_visible():
+                texts = await el.all_inner_texts()
+                text = "\n".join([t for t in texts if t.strip()])
+                if text:
+                    selectors["reply_selector"] = ".ds-message:last-of-type .ds-markdown-paragraph"
+                    reply_found.append(".ds-message:last-of-type .ds-markdown-paragraph")
+                    # 兼容其它候选
+                    if await page.locator('.ds-message .ds-markdown-paragraph').first.is_visible():
+                        reply_found.append('.ds-message .ds-markdown-paragraph')
+                    if await page.locator('div.ds-message:last-of-type div.ds-markdown > p.ds-markdown-paragraph').first.is_visible():
+                        reply_found.append('div.ds-message:last-of-type div.ds-markdown > p.ds-markdown-paragraph')
+                    # 兼容原有
+                    if await page.locator('p.ds-markdown-paragraph').first.is_visible():
+                        reply_found.append('p.ds-markdown-paragraph')
+                    if await page.locator('p[class*="markdown"]').first.is_visible():
+                        reply_found.append('p[class*="markdown"]')
+                    selectors["reply_selector_candidates"] = reply_found
+                    logger.info(f"[auto_extract_chat_selectors] reply_found: {reply_found}")
+                    return selectors
+    except Exception:
+        pass
+    # 回退原有逻辑
     for sel in reply_candidates:
         try:
             el = page.locator(sel)
@@ -411,10 +443,13 @@ class PooledProviderTaskProcessor:
             result = await self.process(decision)
             # 结果入库与状态更新
             if result.ok:
+                if result.raw_response:
+                    self.task_repo.save_raw_response(task.id, task.provider, result.raw_response)
                 self.task_repo.mark_status(task.id, TaskStatus.COMPLETED)
+                logger.info(f"[worker] get  reply: id={task.id} reply={result.raw_response}")
             else:
                 self.task_repo.mark_status(task.id, TaskStatus.FAILED)
-            logger.info(f"[worker] 任务处理完成: id={task.id} status={'COMPLETED' if result.ok else 'FAILED'} error={result.error_message}")
+                logger.info(f"[worker] 任务处理完成: id={task.id} status={'COMPLETED' if result.ok else 'FAILED'} error={result.error_message}")
             break
 
         await asyncio.sleep(self.idle_sleep_seconds)
@@ -451,11 +486,23 @@ class PooledProviderTaskProcessor:
                     logger=logger
                 )
                 logger.info(f"[mark_login_ok] selectors 提取结果: {selectors}")
-                # 无论是否齐全都写入 provider_config.ready_selectors_json
+                # 增量合并 ready_selectors_json，未采集到的 selector 字段保留原值
                 repo = ProviderConfigRepository()
-                logger.info(f"[mark_login_ok] update_ready_selectors 调用: provider={self.provider} selectors={selectors}")
+                old_row = repo.get(self.provider)
+                import json
+                old_selectors = {}
+                if old_row and old_row.ready_selectors_json:
+                    try:
+                        old_selectors = json.loads(old_row.ready_selectors_json)
+                    except Exception:
+                        old_selectors = {}
+                merged = dict(old_selectors)
+                for k, v in selectors.items():
+                    if v:
+                        merged[k] = v
+                logger.info(f"[mark_login_ok] update_ready_selectors 调用: provider={self.provider} merged_selectors={merged}")
                 try:
-                    repo.update_ready_selectors(self.provider, selectors)
+                    repo.update_ready_selectors(self.provider, merged)
                     logger.info(f"[mark_login_ok] update_ready_selectors 成功: provider={self.provider}")
                 except Exception as db_exc:
                     logger.error(f"[mark_login_ok] update_ready_selectors 异常: {db_exc}\n{traceback.format_exc()}")
