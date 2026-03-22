@@ -43,25 +43,19 @@ async def verify_session(req: VerifySessionRequest = Body(...)) -> VerifySession
         if session_row and getattr(session_row, 'owner', None):
             target_thread_id = str(session_row.owner)
         else:
-            # 若无 session 或 owner，按 provider 选择第一个可用 worker 线程（可优化为 provider->thread 映射）
-            # 这里假设 provider 名称等于 thread_id 或有映射关系
-            # 实际可维护 provider->thread_id 映射表
             from threading import enumerate as thread_enumerate
             threads = list(thread_enumerate())
-            # 简单策略：取第一个非主线程
             target_thread_id = None
             for t in threads:
-                if getattr(t, 'ident', None) and t.name != 'MainThread':
+                if t.name == f"WorkerThread-{req.provider}" and getattr(t, 'ident', None):
                     target_thread_id = str(t.ident)
                     break
+            
             if not target_thread_id:
-                return VerifySessionResponse(
-                    ok=False,
-                    message="无可用 worker 线程，无法分配 session owner",
-                    session_id=req.session_id,
-                    provider=req.provider,
-                    url=req.url,
-                )
+                logger.info(f"[worker] dynamically starting worker thread for provider={req.provider}...")
+                from src.browser.worker import start_worker_thread
+                new_t = start_worker_thread(req.provider, logger)
+                target_thread_id = str(new_t.ident)
         command_id = uuid.uuid4().hex
         command = WorkerCommand(
             command_id=command_id,

@@ -29,8 +29,13 @@ _purge_all_tasks()
 
 from src.logging_mp import setup_logging, startlog
 from datetime import datetime
+import threading
+
 logger = startlog(__name__)
-    
+
+_rr_lock = threading.Lock()
+_rr_cursor = 0
+
 def _to_task_read(row: TaskORM) -> TaskRead:
     latest_trace_id = log_repo.get_latest_trace_id(row.id)
     return TaskRead(
@@ -123,12 +128,7 @@ def _all_sessions_unhealthy_or_unavailable(request) -> bool:
         key = s.provider  # provider 作为唯一 key，无需 make_key
         entry = pool._entries.get(key)
         if entry is not None:
-            if hasattr(entry.page, "is_unhealthy"):
-                is_healthy = not (entry.page.is_closed() or getattr(entry.page, "is_unhealthy")())
-            else:
-                is_healthy = not entry.page.is_closed()
-            if is_healthy:
-                return False
+            return False
     return True
 
 
@@ -145,7 +145,8 @@ def create_task(payload: TaskCreate, request: Request) -> TaskRead:
     import threading
     session_repo = SessionRepository()
     sessions = session_repo.list()
-    pool = getattr(request.app.state, 'session_pool', None)
+    from src.browser.session_pool import get_global_provider_session_pool
+    pool = get_global_provider_session_pool()
     ready_entries = []
     busy_entries = []
     if pool is not None and sessions:
@@ -153,29 +154,21 @@ def create_task(payload: TaskCreate, request: Request) -> TaskRead:
             key = s.provider  # provider 作为唯一 key，无需 make_key
             entry = pool._entries.get(key)
             if entry is not None:
-                # 判断健康状态
-                if hasattr(entry.page, "is_unhealthy"):
-                    is_healthy = not (entry.page.is_closed() or getattr(entry.page, "is_unhealthy")())
-                else:
-                    is_healthy = not entry.page.is_closed()
-                # 获取 session state
-                state = None
-                if is_healthy:
-                    state = "READY"
-                else:
-                    state = "BUSY" if not entry.page.is_closed() else "UNHEALTHY"
-                # 优先收集 READY
-                if state == "READY":
-                    ready_entries.append(entry)
-                elif state == "BUSY":
-                    busy_entries.append(entry)
-    # 分配策略：优先 READY，若无则 BUSY，均按优先级/顺序分配
+                # 避免在 API 线程跨线程访问 Playwright page
+                ready_entries.append(entry)
+    # 分配策略：优先 READY，若无则 BUSY，均使用轮询
     logger.info(f"[create_task] READY sessions count:{len(ready_entries)}, BUSY sessions count:{len(busy_entries)}")
     target_entry = None
-    if len(ready_entries):
-        target_entry = ready_entries[0]
-    elif len(busy_entries):
-        target_entry = busy_entries[0]
+    global _rr_cursor
+
+    if len(ready_entries) > 0:
+        with _rr_lock:
+            _rr_cursor = (_rr_cursor + 1) % len(ready_entries)
+            target_entry = ready_entries[_rr_cursor]
+    elif len(busy_entries) > 0:
+        with _rr_lock:
+            _rr_cursor = (_rr_cursor + 1) % len(busy_entries)
+            target_entry = busy_entries[_rr_cursor]
 
     # 补全 owner、session_id、provider 字段
     if target_entry is not None:

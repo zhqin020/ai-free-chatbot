@@ -44,10 +44,9 @@ import os
 from src.browser.session_manager import SessionManager
 session_manager = SessionManager()
 
-# --- worker 线程主循环/启动逻辑 ---
-def start_all_worker_threads(logger=None):
+def start_worker_thread(provider: str, logger=None) -> '__import__("threading").Thread':
     """
-    启动所有 provider 的 worker 线程。主入口由 main.py 调用。
+    启动单个 provider 的 worker 线程
     """
     import threading
     import asyncio
@@ -56,36 +55,26 @@ def start_all_worker_threads(logger=None):
     from src.storage.repositories import SessionRepository, TaskRepository
     from sqlalchemy import select
     from src.storage.database import ProviderConfigORM, session_scope
-    # 延迟导入，避免循环依赖
     
-    from src.browser.worker import PooledProviderTaskProcessor
-
-    with session_scope() as session:
-        provider_rows = session.execute(select(ProviderConfigORM)).scalars().all()
-        providers = sorted(set(row.name for row in provider_rows if row.name))
-    if not providers:
-        if logger:
-            logger.warning("[worker] 未检测到任何 provider，会跳过 worker 线程启动。请先初始化 provider_configs 表。")
-        return
-
-    def worker_thread(provider):
+    def worker_thread():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         pool = get_global_provider_session_pool()
         session_repo = SessionRepository()
         task_repo = TaskRepository()
         adapter = DefaultProviderAdapter(provider)
-        # 获取 provider url
         with session_scope() as session:
             provider_row = session.execute(select(ProviderConfigORM).where(ProviderConfigORM.name == provider)).scalars().first()
             chat_url = provider_row.url if provider_row and provider_row.url else "about:blank"
         session_id = f"s-{provider}-1"
         owner = str(threading.get_ident())
-        # 统一通过 SessionManager 创建/同步 session
         session_manager.get_or_create(session_id, provider, chat_url, owner)
         if logger:
             logger.info(f"[worker] 启动线程: provider={provider} thread_id={owner} pid={os.getpid()} url={chat_url}")
         print(f"[worker-thread-debug] provider={provider} thread_id={owner} pid={os.getpid()} url={chat_url}")
+        
+        # 延迟导入，避免循环依赖
+        from src.browser.worker import PooledProviderTaskProcessor
         processor = PooledProviderTaskProcessor(
             provider=provider,
             adapter=adapter,
@@ -100,11 +89,32 @@ def start_all_worker_threads(logger=None):
                 await asyncio.sleep(0.5)
         loop.run_until_complete(run())
 
+    t = threading.Thread(target=worker_thread, name=f"WorkerThread-{provider}", daemon=True)
+    t.start()
+    return t
+
+
+def start_all_worker_threads(logger=None):
+    """
+    启动所有 provider 的 worker 线程。主入口由 main.py 调用。
+    """
+    from sqlalchemy import select
+    from src.storage.database import ProviderConfigORM, session_scope
+
+    with session_scope() as session:
+        provider_rows = session.execute(select(ProviderConfigORM)).scalars().all()
+        providers = sorted(set(row.name for row in provider_rows if row.name))
+        
+    if not providers:
+        if logger:
+            logger.warning("[worker] 未检测到任何 provider，会跳过 worker 线程启动。请先初始化 provider_configs 表。")
+        return
+
     threads = []
     for provider in providers:
-        t = threading.Thread(target=worker_thread, args=(provider,), name=f"WorkerThread-{provider}", daemon=True)
-        t.start()
+        t = start_worker_thread(provider, logger)
         threads.append(t)
+    return threads
 
 
 
@@ -266,6 +276,8 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
 
     # 回复区域（assistant/message/reply）增强：优先检测 .ds-message 结构
     reply_candidates = [
+        "message-content",
+        "model-response",
         "[data-testid='assistant-message']",
         "div.message.assistant",
         "article[data-role='assistant']",

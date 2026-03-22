@@ -39,23 +39,15 @@ def _to_session_read(row: SessionORM, request: Request) -> SessionRead:
     # 动态补充 state/login_state 字段，兼容前端
     state = None
     login_state = None
-    pool = getattr(request.app.state, 'session_pool', None)
-    if pool is None:
-        raise RuntimeError('session_pool must be injected via app.state.session_pool')
+    from src.browser.session_pool import get_global_provider_session_pool
+    pool = get_global_provider_session_pool()
     key = row.provider  # provider 作为唯一 key，无需 make_key
     entry = pool._entries.get(key)
     if entry is not None:
-        # 允许 page 对象有 is_unhealthy 属性或方法
-        if hasattr(entry.page, "is_unhealthy"):
-            is_healthy = not (entry.page.is_closed() or getattr(entry.page, "is_unhealthy")())
-        else:
-            is_healthy = not entry.page.is_closed()
-        if is_healthy:
-            state = "READY"
-            login_state = "logged_in"
-        else:
-            state = "UNHEALTHY"
-            login_state = "unknown"
+        # 避免在 API 线程跨线程调用 Playwright 对象的方法。
+        # 只要 entry 在池中，就当做 READY，如果 page closed，留给 worker 线程自己去清理。
+        state = "READY"
+        login_state = "logged_in"
     else:
         state = "WAIT_LOGIN"
         login_state = "unknown"
@@ -131,10 +123,22 @@ async def discover_sessions() -> list[SessionRead]:
                     session.refresh(db_row)
                     row = db_row
 
-    # 2. 拉起页面并检测 ready 状态
-    from src.browser.worker import discover_and_launch_sessions
-    session_status_list = await discover_and_launch_sessions()
-    # 3. 仅根据 session_status_list 返回 session 对象
+    # 2. 拉起页面并检测 ready 状态（通过 worker API 验证以避免跨线程 Playwright 调用）
+    import httpx
+    async with httpx.AsyncClient() as client:
+        for provider_row in provider_rows:
+            session_id = f"s-{provider_row.name}-1"
+            verify_req = {
+                'provider': provider_row.name,
+                'session_id': session_id,
+                'url': provider_row.url
+            }
+            try:
+                await client.post("http://localhost:8000/api/worker/verify-session", json=verify_req, timeout=15.0)
+            except Exception as exc:
+                logger.error(f"[discover_sessions] Failed to verify session {session_id}: {exc}")
+
+    # 3. 返回 session 对象
     from fastapi import Request
     # 获取当前 request 对象（FastAPI 依赖注入）
     import inspect
@@ -147,9 +151,10 @@ async def discover_sessions() -> list[SessionRead]:
         frame = frame.f_back
     if request is None:
         from fastapi import Request as _Request
-        request = _Request(scope={})  # fallback, 但理论上不会走到
-    for s in session_status_list:
-        session_id = s.get('session_id')
+        request = _Request(scope={"type": "http", "method": "GET"})  # fallback
+        
+    for provider_row in provider_rows:
+        session_id = f"s-{provider_row.name}-1"
         row = session_repo.get(session_id)
         if row:
             discovered.append(_to_session_read(row, request))
@@ -202,11 +207,15 @@ async def mark_login_ok(session_id: str, request: Request) -> SessionRead:
         threads = list(thread_enumerate())
         target_thread_id = None
         for t in threads:
-            if getattr(t, 'ident', None) and t.name != 'MainThread':
+            if t.name == f"WorkerThread-{row.provider}" and getattr(t, 'ident', None):
                 target_thread_id = str(t.ident)
                 break
+        
         if not target_thread_id:
-            raise HTTPException(status_code=500, detail="无可用 worker 线程，无法分配 session owner")
+            logger.info(f"[worker] dynamically starting worker thread for provider={row.provider}...")
+            from src.browser.worker import start_worker_thread
+            new_t = start_worker_thread(row.provider, logger)
+            target_thread_id = str(new_t.ident)
     import uuid
     from src.browser.worker import WorkerCommand, put_command, get_command_result
     command_id = uuid.uuid4().hex
