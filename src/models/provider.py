@@ -54,10 +54,12 @@ class ProviderSessionTargetResponse(BaseModel):
     sessions_url: str
 
 
-class TaskDispatchConfigRead(BaseModel):
+class AppParamRead(BaseModel):
     mode: TaskDispatchMode
+    max_chat_rounds: int
     updated_at: datetime
 
 
-class TaskDispatchConfigUpdate(BaseModel):
-    mode: TaskDispatchMode
+class AppParamUpdate(BaseModel):
+    mode: TaskDispatchMode | None = None
+    max_chat_rounds: int | None = None

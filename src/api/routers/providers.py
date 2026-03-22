@@ -10,17 +10,17 @@ from src.models.provider import (
     ProviderOpenResponse,
     ProviderClearSessionsResponse,
     ProviderSessionTargetResponse,
-    TaskDispatchConfigRead,
-    TaskDispatchConfigUpdate,
+    AppParamRead,
+    AppParamUpdate,
 )
 
 from src.storage.database import ProviderConfigORM
-from src.storage.repositories import ProviderConfigRepository, SessionRepository, TaskDispatchConfigRepository
+from src.storage.repositories import ProviderConfigRepository, SessionRepository, AppParamRepository
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 provider_repo = ProviderConfigRepository()
 session_repo = SessionRepository()
-dispatch_repo = TaskDispatchConfigRepository()
+app_param_repo = AppParamRepository()
 
 
 def _map_session_provider(name: str) -> str | None:
@@ -47,16 +47,19 @@ def list_providers() -> list[ProviderConfigRead]:
     return [_to_read(row) for row in rows]
 
 
-@router.get("/dispatch-mode", response_model=TaskDispatchConfigRead)
-def get_dispatch_mode() -> TaskDispatchConfigRead:
-    row = dispatch_repo.get()
-    return TaskDispatchConfigRead(mode=row.mode, updated_at=row.updated_at)
+@router.get("/app-params", response_model=AppParamRead)
+def get_app_params() -> AppParamRead:
+    row = app_param_repo.get()
+    return AppParamRead(mode=row.mode, max_chat_rounds=row.max_chat_rounds, updated_at=row.updated_at)
 
 
-@router.put("/dispatch-mode", response_model=TaskDispatchConfigRead)
-def update_dispatch_mode(payload: TaskDispatchConfigUpdate) -> TaskDispatchConfigRead:
-    updated = dispatch_repo.set_mode(payload.mode.value)
-    return TaskDispatchConfigRead(mode=updated.mode, updated_at=updated.updated_at)
+@router.put("/app-params", response_model=AppParamRead)
+def update_app_params(payload: AppParamUpdate) -> AppParamRead:
+    updated = app_param_repo.update_config(
+        mode=payload.mode.value if payload.mode else None,
+        max_chat_rounds=payload.max_chat_rounds
+    )
+    return AppParamRead(mode=updated.mode, max_chat_rounds=updated.max_chat_rounds, updated_at=updated.updated_at)
 
 
 @router.post("", response_model=ProviderConfigRead, status_code=status.HTTP_201_CREATED)

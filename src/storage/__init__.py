@@ -17,7 +17,7 @@ from .repositories import (
 	AttemptRepository,
 	ProviderConfigRepository,
 	SessionRepository,
-	TaskDispatchConfigRepository,
+	AppParamRepository,
 	TaskRepository,
 )
 
@@ -38,6 +38,6 @@ __all__ = [
     "AttemptRepository",
     "ProviderConfigRepository",
     "SessionRepository",
-    "TaskDispatchConfigRepository",
+    "AppParamRepository",
     "TaskRepository",
 ]

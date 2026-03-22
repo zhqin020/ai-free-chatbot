@@ -16,7 +16,7 @@ from .database import (
     RawResponseORM,
     SessionORM,
     SystemLogORM,
-    TaskDispatchConfigORM,
+    AppParamORM,
     TaskAttemptORM,
     TaskORM,
     session_scope,
@@ -132,6 +132,22 @@ class SessionRepository:
                 row.updated_at = datetime.now(UTC)
             session.flush()
             return len(rows)
+
+    def increment_chat_rounds(self, session_id: str) -> None:
+        with session_scope() as session:
+            row = session.get(SessionORM, session_id)
+            if row:
+                row.chat_rounds += 1
+                row.updated_at = datetime.now(UTC)
+                session.flush()
+
+    def reset_chat_rounds(self, session_id: str) -> None:
+        with session_scope() as session:
+            row = session.get(SessionORM, session_id)
+            if row:
+                row.chat_rounds = 0
+                row.updated_at = datetime.now(UTC)
+                session.flush()
 
 
 class TaskRepository:
@@ -366,23 +382,25 @@ class ProviderConfigRepository:
                 return False
             session.delete(row)
             return True
-class TaskDispatchConfigRepository:
+class AppParamRepository:
     DEFAULT_ID = 1
     DEFAULT_MODE = "priority"
+    DEFAULT_MAX_CHAT_ROUNDS = 0
 
-    def _ensure_row(self, session, timestamp: datetime) -> TaskDispatchConfigORM:
-        row = session.get(TaskDispatchConfigORM, self.DEFAULT_ID)
+    def _ensure_row(self, session, timestamp: datetime) -> AppParamORM:
+        row = session.get(AppParamORM, self.DEFAULT_ID)
         if row is None:
-            row = TaskDispatchConfigORM(
+            row = AppParamORM(
                 id=self.DEFAULT_ID,
                 mode=self.DEFAULT_MODE,
+                max_chat_rounds=self.DEFAULT_MAX_CHAT_ROUNDS,
                 created_at=timestamp,
                 updated_at=timestamp,
             )
             session.add(row)
         return row
 
-    def get(self) -> TaskDispatchConfigORM:
+    def get(self) -> AppParamORM:
         now = datetime.now(UTC)
         with session_scope() as session:
             row = self._ensure_row(session, now)
@@ -393,11 +411,14 @@ class TaskDispatchConfigRepository:
     def get_mode(self) -> str:
         return self.get().mode
 
-    def set_mode(self, mode: str) -> TaskDispatchConfigORM:
+    def update_config(self, *, mode: str | None = None, max_chat_rounds: int | None = None) -> AppParamORM:
         now = datetime.now(UTC)
         with session_scope() as session:
             row = self._ensure_row(session, now)
-            row.mode = mode
+            if mode is not None:
+                row.mode = mode
+            if max_chat_rounds is not None:
+                row.max_chat_rounds = max_chat_rounds
             row.updated_at = now
             session.flush()
             session.refresh(row)

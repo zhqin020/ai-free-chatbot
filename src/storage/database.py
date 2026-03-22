@@ -32,6 +32,7 @@ class SessionORM(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # 新增：优先级字段，默认100，支持 session 调度
     priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    chat_rounds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -73,11 +74,12 @@ class ProviderConfigORM(Base):
     sessions: Mapped[list[SessionORM]] = relationship("SessionORM", back_populates="provider_config")
 
 
-class TaskDispatchConfigORM(Base):
-    __tablename__ = "task_dispatch_config"
+class AppParamORM(Base):
+    __tablename__ = "app_params"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    max_chat_rounds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

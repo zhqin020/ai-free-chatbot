@@ -10,7 +10,7 @@ from src.storage.database import SessionORM
 from src.storage.repositories import (
     AttemptRepository,
     SessionRepository,
-    TaskDispatchConfigRepository,
+    AppParamRepository,
     TaskRepository,
 )
 
@@ -33,14 +33,14 @@ class WeightedRoundRobinScheduler:
         session_repo: SessionRepository | None = None,
         task_repo: TaskRepository | None = None,
         attempt_repo: AttemptRepository | None = None,
-        dispatch_config_repo: TaskDispatchConfigRepository | None = None,
+        dispatch_config_repo: AppParamRepository | None = None,
         timeout_seconds: int = 30,
         session_pool: object = None,
     ) -> None:
         self.session_repo = session_repo or SessionRepository()
         self.task_repo = task_repo or TaskRepository()
         self.attempt_repo = attempt_repo or AttemptRepository()
-        self.dispatch_config_repo = dispatch_config_repo or TaskDispatchConfigRepository()
+        self.dispatch_config_repo = dispatch_config_repo or AppParamRepository()
         self.timeout_seconds = timeout_seconds
         self._cursor = 0
         self.session_pool = session_pool

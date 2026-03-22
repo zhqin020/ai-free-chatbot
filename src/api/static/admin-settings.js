@@ -54,11 +54,11 @@ const api = {
 	},
 
 	getDispatchMode() {
-		return this.request("/api/providers/dispatch-mode");
+		return this.request("/api/providers/app-params");
 	},
 
 	updateDispatchMode(payload) {
-		return this.request("/api/providers/dispatch-mode", {
+		return this.request("/api/providers/app-params", {
 			method: "PUT",
 			body: JSON.stringify(payload),
 		});
@@ -75,6 +75,7 @@ const nodes = {
 	form: document.getElementById("provider-form"),
 	dispatchForm: document.getElementById("dispatch-form"),
 	dispatchMode: document.getElementById("dispatch-mode"),
+	dispatchMaxRounds: document.getElementById("dispatch-max-rounds"),
 	formTitle: document.getElementById("form-title"),
 	editingName: document.getElementById("editing-name"),
 	name: document.getElementById("provider-name"),
@@ -175,13 +176,17 @@ async function loadDispatchMode() {
 	if (row?.mode) {
 		nodes.dispatchMode.value = row.mode;
 	}
+	if (row?.max_chat_rounds !== undefined) {
+		nodes.dispatchMaxRounds.value = row.max_chat_rounds;
+	}
 }
 
 async function handleDispatchSubmit(event) {
 	event.preventDefault();
 	const mode = nodes.dispatchMode.value;
-	await api.updateDispatchMode({ mode });
-	showToast(`任务分配方式已更新: ${mode === "round_robin" ? "循环" : "按优先级"}`);
+	const max_chat_rounds = parseInt(nodes.dispatchMaxRounds.value, 10) || 0;
+	await api.updateDispatchMode({ mode, max_chat_rounds });
+	showToast(`参数已更新: 分配=${mode === "round_robin" ? "循环" : "按优先级"}, 轮数=${max_chat_rounds}`);
 }
 
 async function handleSubmit(event) {

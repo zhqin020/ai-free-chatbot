@@ -35,9 +35,9 @@
 					</div>
 				</header>
 
-				<section class="panel" aria-label="Dispatch mode">
+				<section class="panel" aria-label="System settings">
 					<div class="panel-head">
-						<h2>Task Dispatch Mode</h2>
+						<h2>System Settings (App Params)</h2>
 					</div>
 					<form id="dispatch-form" class="form-grid">
 						<label>
@@ -47,8 +47,12 @@
 								<option value="priority">按优先级</option>
 							</select>
 						</label>
+						<label>
+							最大连续对话轮数 (0表示不限制)
+							<input id="dispatch-max-rounds" type="number" min="0" value="0" required />
+						</label>
 						<div class="actions span-3">
-							<button id="dispatch-submit" type="submit" class="btn btn-primary">保存分配方式</button>
+							<button id="dispatch-submit" type="submit" class="btn btn-primary">保存参数配置</button>
 						</div>
 					</form>
 				</section>

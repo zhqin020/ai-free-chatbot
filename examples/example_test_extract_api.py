@@ -190,13 +190,11 @@ def main() -> None:
     # 客户端无需检查会话状态，直接发送请求
 
     # 连续多次请求
-    N = 4
+    N = 1
     results = []
      
     for i in range(N):
         print(f"\n===== Run {i+1} =====")
-         
-        
         
         #request_payload = ApiClient.make_chat_request_payload(document_text=document_text, msg_id_prefix=f"e2e-openchat")
         request_payload = ApiClient.make_chat_request_payload_v2(

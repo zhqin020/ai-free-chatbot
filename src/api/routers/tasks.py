@@ -8,15 +8,22 @@ from src.models.task import TaskCreate, TaskPollRead, TaskRead
 from src.models.session import SessionState
 from src.parser import ResponseExtractor
 from src.storage.database import TaskORM
-from src.storage.repositories import AttemptRepository, LogRepository, SessionRepository, TaskRepository
+from src.storage.repositories import (
+    AttemptRepository,
+    LogRepository,
+    SessionRepository,
+    AppParamRepository,
+    TaskRepository,
+)
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 task_repo = TaskRepository()
-log_repo = LogRepository()
-attempt_repo = AttemptRepository()
-response_extractor = ResponseExtractor()
 session_repo = SessionRepository()
+attempt_repo = AttemptRepository()
+log_repo = LogRepository()
+response_extractor = ResponseExtractor()
+dispatch_repo = AppParamRepository()
 SessionState = SessionState
 
 # 启动时自动清空 tasks 表，防止历史任务被 worker 处理

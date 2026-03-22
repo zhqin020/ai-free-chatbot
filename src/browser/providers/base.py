@@ -94,6 +94,9 @@ class DefaultProviderAdapter(ProviderAdapter):
         """
         from src.browser.worker import ProcessResult
         try:
+            # 0. 重新加载最新配置，避免长时间运行导致的配置过期
+            self._load_selectors_from_provider()
+
             # 1. 检查登录状态
             if not await self.is_logged_in(page):
                 return ProcessResult(ok=False, error_message="Not logged in", permanent_failure=True)
@@ -288,7 +291,7 @@ class DefaultProviderAdapter(ProviderAdapter):
                     except Exception as exc:
                         logger.info(f"[wait_for_response] wait_for_selector timeout or error: {exc}")
                     first_wait = False
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
                 continue
 
             locator = page.locator(selector)
@@ -298,20 +301,33 @@ class DefaultProviderAdapter(ProviderAdapter):
                 if count > 0:
                     # 取所有匹配元素的最后一个（最新回复）
                     last_locator = locator.nth(count - 1)
-                    if await last_locator.is_visible():
+                    is_vis = await last_locator.is_visible()
+                    logger.debug(f"[wait_for_response] last_locator is_visible={is_vis}")
+                    if is_vis:
                         texts = await last_locator.all_inner_texts()
                         text = self.normalize_text("\n".join(texts) if isinstance(texts, list) else str(texts))
+                        if not text:
+                            # fallback to textContent
+                            try:
+                                raw_text = await last_locator.evaluate("el => el.textContent")
+                                text = self.normalize_text(raw_text or "")
+                                logger.debug(f"[wait_for_response] all_inner_texts empty, textContent yielded {len(text)} chars")
+                            except Exception as eval_exc:
+                                logger.warning(f"[wait_for_response] evaluate textContent failed: {eval_exc}")
+                        
+                        logger.debug(f"[wait_for_response] extracted text length={len(text)}")
+                        
                         if text and text != previous_response:
                             if text != last_text:
                                 last_text = text
                                 last_change_time = time.monotonic()
                             else:
-                                if time.monotonic() - last_change_time > 3.0:
-                                    logger.info(f"[wait_for_response] text stable for 3s, returning {len(text)} chars...")
+                                if time.monotonic() - last_change_time > 1.0:
+                                    logger.info(f"[wait_for_response] text stable for 1s, returning {len(text)} chars...")
                                     return text
             except Exception as exc:
                 logger.warning(f"[wait_for_response] Exception: {exc}")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
 
         # 超时处理
         if not last_text:

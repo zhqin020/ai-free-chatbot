@@ -85,8 +85,9 @@ def start_worker_thread(provider: str, logger=None) -> '__import__("threading").
         async def run():
             await get_or_create_provider_session(provider, session_id, chat_url)
             while True:
-                await processor.run_once()
-                await asyncio.sleep(0.5)
+                active = await processor.run_once()
+                if not active:
+                    await asyncio.sleep(0.5)
         loop.run_until_complete(run())
 
     t = threading.Thread(target=worker_thread, name=f"WorkerThread-{provider}", daemon=True)
@@ -283,12 +284,11 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
         "article[data-role='assistant']",
         ".message, .response, .chat-message",
         "div[role='log']",
-        "div[aria-live]",
         "article",
-        ".ds-message .ds-markdown-paragraph",
-        ".ds-message:last-of-type .ds-markdown-paragraph",
-        "div.ds-message:last-of-type div.ds-markdown > p.ds-markdown-paragraph",
-        "p.ds-markdown-paragraph",
+        ".ds-message .ds-markdown",
+        ".ds-message:last-of-type .ds-markdown",
+        "div.ds-message:last-of-type div.ds-markdown",
+        "p.ds-markdown",
         "p[class*='markdown']",
     ]
     reply_found = []
@@ -298,22 +298,22 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
     try:
         msg_count = await page.locator('.ds-message').count()
         if msg_count > 0:
-            # 检查 .ds-message:last-of-type .ds-markdown-paragraph 是否可见且有内容
-            el = page.locator('.ds-message:last-of-type .ds-markdown-paragraph')
+            # 检查 .ds-message:last-of-type .ds-markdown 是否可见且有内容
+            el = page.locator('.ds-message:last-of-type .ds-markdown')
             if await el.first.is_visible():
                 texts = await el.all_inner_texts()
                 text = "\n".join([t for t in texts if t.strip()])
                 if text:
-                    selectors["reply_selector"] = ".ds-message:last-of-type .ds-markdown-paragraph"
-                    reply_found.append(".ds-message:last-of-type .ds-markdown-paragraph")
+                    selectors["reply_selector"] = ".ds-message:last-of-type .ds-markdown"
+                    reply_found.append(".ds-message:last-of-type .ds-markdown")
                     # 兼容其它候选
-                    if await page.locator('.ds-message .ds-markdown-paragraph').first.is_visible():
-                        reply_found.append('.ds-message .ds-markdown-paragraph')
-                    if await page.locator('div.ds-message:last-of-type div.ds-markdown > p.ds-markdown-paragraph').first.is_visible():
-                        reply_found.append('div.ds-message:last-of-type div.ds-markdown > p.ds-markdown-paragraph')
+                    if await page.locator('.ds-message .ds-markdown').first.is_visible():
+                        reply_found.append('.ds-message .ds-markdown')
+                    if await page.locator('div.ds-message:last-of-type div.ds-markdown').first.is_visible():
+                        reply_found.append('div.ds-message:last-of-type div.ds-markdown')
                     # 兼容原有
-                    if await page.locator('p.ds-markdown-paragraph').first.is_visible():
-                        reply_found.append('p.ds-markdown-paragraph')
+                    if await page.locator('p.ds-markdown').first.is_visible():
+                        reply_found.append('p.ds-markdown')
                     if await page.locator('p[class*="markdown"]').first.is_visible():
                         reply_found.append('p[class*="markdown"]')
                     selectors["reply_selector_candidates"] = reply_found
@@ -440,7 +440,7 @@ class PooledProviderTaskProcessor:
         while True:
             task = self.task_repo.claim_next_pending(owner=current_thread_id)
             if not task:
-                break
+                return False
             logger.info(f"[worker] 领取任务: id={task.id} provider={task.provider} session_id={task.session_id} owner={task.owner} 当前线程={current_thread_id}")
             decision = DispatchDecision(
                 provider=task.provider,
@@ -459,13 +459,38 @@ class PooledProviderTaskProcessor:
                     self.task_repo.save_raw_response(task.id, task.provider, result.raw_response)
                 self.task_repo.mark_status(task.id, TaskStatus.COMPLETED)
                 logger.info(f"[worker] get  reply: id={task.id} reply={result.raw_response}")
+                
+                # --- Auto-Reset Check ---
+                self.session_repo.increment_chat_rounds(task.session_id)
+                session_obj = self.session_repo.get(task.session_id)
+                from src.storage.repositories import AppParamRepository
+                app_param = AppParamRepository().get()
+                max_rounds = app_param.max_chat_rounds
+                
+                if max_rounds > 0 and session_obj and session_obj.chat_rounds >= max_rounds:
+                    logger.info(f"[worker] session {task.session_id} 达到最大轮数 {max_rounds}，准备重置对话")
+                    try:
+                        page = await get_or_create_provider_session(
+                            decision.provider, decision.session_id, getattr(decision, 'chat_url', None)
+                        )
+                        from src.storage.repositories import ProviderConfigRepository
+                        import json
+                        provider_row = ProviderConfigRepository().get(decision.provider)
+                        if provider_row and provider_row.ready_selectors_json:
+                            selectors = json.loads(provider_row.ready_selectors_json)
+                            if selectors.get("new_chat_selector"):
+                                await page.click(selectors["new_chat_selector"], timeout=5000)
+                                logger.info(f"[worker] 成功点击 'New chat' 按钮重置对话: {task.session_id}")
+                                await asyncio.sleep(2)  # 给页面一点响应和加载时间
+                    except Exception as reset_exc:
+                        logger.warning(f"[worker] 重置对话失败: {reset_exc}")
+                    finally:
+                        self.session_repo.reset_chat_rounds(task.session_id)
+
             else:
                 self.task_repo.mark_status(task.id, TaskStatus.FAILED)
                 logger.info(f"[worker] 任务处理完成: id={task.id} status={'COMPLETED' if result.ok else 'FAILED'} error={result.error_message}")
-            break
-
-        await asyncio.sleep(self.idle_sleep_seconds)
-        return True
+            return True
     
     async def _handle_command(self, cmd):
         if cmd.command_type == "verify_session":
