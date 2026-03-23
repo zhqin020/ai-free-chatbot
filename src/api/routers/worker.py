@@ -52,6 +52,16 @@ async def verify_session(req: VerifySessionRequest = Body(...)) -> VerifySession
                     break
             
             if not target_thread_id:
+                from src.storage.repositories import ProviderConfigRepository
+                provider_row = ProviderConfigRepository().get(req.provider)
+                if not provider_row or not getattr(provider_row, 'enable', True):
+                    return VerifySessionResponse(
+                        ok=False,
+                        message=f"provider is disabled: {req.provider}",
+                        session_id=req.session_id,
+                        provider=req.provider,
+                        url=req.url,
+                    )
                 logger.info(f"[worker] dynamically starting worker thread for provider={req.provider}...")
                 from src.browser.worker import start_worker_thread
                 new_t = start_worker_thread(req.provider, logger)
@@ -161,6 +171,6 @@ def get_session_pool_entries(provider: str = Query(None)) -> List[SessionPoolEnt
     logger.info(f"[worker] session-pool-entries called: provider={provider}, entries={list(pool._entries.keys())}")
     entries = []
     for key, entry in pool._entries.items():
-        if provider is None or key.startswith(f"{provider}:"):
+        if provider is None or key == provider or key.startswith(f"{provider}:"):
             entries.append(SessionPoolEntryInfo(key=key, url=entry.url, thread_id=entry.thread_id))
     return entries

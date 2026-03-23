@@ -82,6 +82,9 @@ const nodes = {
 	url: document.getElementById("provider-url"),
 	icon: document.getElementById("provider-icon"),
 	iconPicker: document.getElementById("provider-icon-picker"),
+	needLogin: document.getElementById("provider-need-login"),
+	enable: document.getElementById("provider-enable"),
+	lock: document.getElementById("provider-lock"),
 	submit: document.getElementById("submit-btn"),
 	reset: document.getElementById("reset-btn"),
 	refresh: document.getElementById("refresh-btn"),
@@ -114,6 +117,9 @@ function resetForm() {
 	nodes.url.value = "";
 	setIconValue("🤖");
 	nodes.name.disabled = false;
+	if (nodes.needLogin) nodes.needLogin.checked = false;
+	if (nodes.enable) nodes.enable.checked = true;
+	if (nodes.lock) nodes.lock.checked = false;
 	nodes.formTitle.textContent = "Create Provider";
 	nodes.submit.textContent = "Create";
 }
@@ -125,6 +131,9 @@ function fillForEdit(row) {
 	nodes.url.value = row.url;
 	setIconValue(row.icon);
 	nodes.name.disabled = true;
+	if (nodes.needLogin) nodes.needLogin.checked = (row.need_login ?? false);
+	if (nodes.enable) nodes.enable.checked = (row.enable ?? true);
+	if (nodes.lock) nodes.lock.checked = (row.lock ?? false);
 	nodes.formTitle.textContent = `Edit Provider: ${row.name}`;
 	nodes.submit.textContent = "Update";
 }
@@ -134,12 +143,20 @@ function renderRows() {
 	const rows = [...state.providers].sort((a, b) => a.name.localeCompare(b.name));
 	for (const row of rows) {
 		const tr = document.createElement("tr");
-		const deleteAction = row.builtin
+		const deleteAction = (row.builtin || row.lock)
 			? ""
 			: `<button type="button" class="btn btn-danger" data-action="delete" data-name="${row.name}">Delete</button>`;
+			
+		const flags = [];
+		if (row.need_login) flags.push("Login");
+		if (row.enable) flags.push("E");
+		if (row.lock) flags.push("L");
+		const flagsText = flags.length ? flags.join(",") : "-";
+
 		tr.innerHTML = `
       <td><strong>${row.name}</strong>${row.builtin ? " <span class=\"muted\">(builtin)</span>" : ""}</td>
       <td class="icon-cell">${row.icon}</td>
+      <td><span class="muted">[${flagsText}]</span></td>
       <td>${row.url}</td>
       <td>${row.session_provider || "-"}</td>
       <td>${new Date(row.updated_at).toLocaleString()}</td>
@@ -168,6 +185,9 @@ function readPayload() {
 		name: nodes.name.value.trim(),
 		url: nodes.url.value.trim(),
 		icon: nodes.icon.value.trim(),
+		need_login: nodes.needLogin ? nodes.needLogin.checked : false,
+		enable: nodes.enable ? nodes.enable.checked : true,
+		lock: nodes.lock ? nodes.lock.checked : false,
 	};
 }
 
@@ -206,7 +226,13 @@ async function handleSubmit(event) {
 	}
 
 	if (state.editingName) {
-		await api.updateProvider(state.editingName, { url: payload.url, icon: payload.icon });
+		await api.updateProvider(state.editingName, { 
+			url: payload.url, 
+			icon: payload.icon,
+			need_login: payload.need_login,
+			enable: payload.enable,
+			lock: payload.lock 
+		});
 		showToast(`Provider updated: ${state.editingName}`);
 	} else {
 		await api.createProvider(payload);

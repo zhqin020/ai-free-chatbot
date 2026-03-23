@@ -100,6 +100,7 @@ async def discover_sessions() -> list[SessionRead]:
     自动同步 provider 配置到 session，并拉起页面，检测 ready 状态。
     """
     provider_rows = provider_repo.list()
+    provider_rows = [p for p in provider_rows if getattr(p, 'enable', True)]
     discovered: list[SessionRead] = []
 
     # 1. 先同步 provider 配置到 session
@@ -164,7 +165,14 @@ async def discover_sessions() -> list[SessionRead]:
 @router.get("", response_model=list[SessionRead])
 def list_sessions(request: Request) -> list[SessionRead]:
     rows = session_repo.list()
-    return [_to_session_read(row, request) for row in rows]
+    valid_rows = []
+    for row in rows:
+        provider_row = provider_repo.get(row.provider)
+        if provider_row is None or not getattr(provider_row, 'enable', True):
+            session_repo.delete(row.id)
+        else:
+            valid_rows.append(row)
+    return [_to_session_read(row, request) for row in valid_rows]
 
 
 @router.get("/{session_id}", response_model=SessionRead)
@@ -212,6 +220,10 @@ async def mark_login_ok(session_id: str, request: Request) -> SessionRead:
                 break
         
         if not target_thread_id:
+            provider_row = provider_repo.get(row.provider)
+            if not provider_row or not getattr(provider_row, 'enable', True):
+                raise HTTPException(status_code=403, detail=f"provider is disabled: {row.provider}")
+
             logger.info(f"[worker] dynamically starting worker thread for provider={row.provider}...")
             from src.browser.worker import start_worker_thread
             new_t = start_worker_thread(row.provider, logger)
@@ -297,12 +309,12 @@ async def open_session(session_id: str) -> SessionOpenRead:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
 
-    # 检查 provider 是否存在
+    # 检查 provider 是否存在且启用
     provider_row = provider_repo.get(row.provider)
-    if provider_row is None:
+    if provider_row is None or not getattr(provider_row, 'enable', True):
         # 自动删除该 session
         session_repo.delete(session_id)
-        raise HTTPException(status_code=status.HTTP_410_GONE, detail=f"provider '{row.provider}' 已被删除，当前会话已自动清理")
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=f"provider '{row.provider}' 已禁用或被删除，当前会话已自动清理")
 
     previous_http = row.http_session_id
     _, current_http, _ = await _probe_current_http_session_id(row)
@@ -421,15 +433,15 @@ async def verify_session(session_id: str) -> SessionVerifyRead:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"session not found: {session_id}")
 
-    # 检查 provider 是否存在
+    # 检查 provider 是否存在且启用
     provider_row = provider_repo.get(row.provider)
-    if provider_row is None:
+    if provider_row is None or not getattr(provider_row, 'enable', True):
         session_repo.delete(session_id)
         return SessionVerifyRead(
             session_id=row.id,
             valid=False,
             deleted=True,
-            reason=f"provider '{row.provider}' 已被删除，会话已自动清理",
+            reason=f"provider '{row.provider}' 已禁用或被删除，会话已自动清理",
             stored_http_session_id=None,
             current_http_session_id=None,
             tracked=False,

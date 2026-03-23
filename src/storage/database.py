@@ -61,6 +61,10 @@ class ProviderConfigORM(Base):
     # 新增：优先级字段，默认100，可按Provider分配
     priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
 
+    need_login: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    lock: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

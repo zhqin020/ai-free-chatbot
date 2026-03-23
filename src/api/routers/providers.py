@@ -17,6 +17,10 @@ from src.models.provider import (
 from src.storage.database import ProviderConfigORM
 from src.storage.repositories import ProviderConfigRepository, SessionRepository, AppParamRepository
 
+import threading
+from uuid import uuid4
+from src.browser.worker import start_worker_thread, WorkerCommand, put_command
+
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 provider_repo = ProviderConfigRepository()
 session_repo = SessionRepository()
@@ -27,6 +31,12 @@ def _map_session_provider(name: str) -> str | None:
     # 直接返回自身，保持 provider 名称全链路一致
     return name if name else None
 
+def _get_worker_thread_id(provider: str) -> str | None:
+    for t in threading.enumerate():
+        if t.name == f"WorkerThread-{provider}" and getattr(t, 'ident', None):
+            return str(t.ident)
+    return None
+
 
 def _to_read(row: ProviderConfigORM) -> ProviderConfigRead:
     mapped = _map_session_provider(row.name)
@@ -34,6 +44,9 @@ def _to_read(row: ProviderConfigORM) -> ProviderConfigRead:
         name=row.name,
         url=row.url,
         icon=row.icon,
+        need_login=row.need_login,
+        enable=row.enable,
+        lock=row.lock,
         builtin=row.name in provider_repo.DEFAULTS,
         session_provider=mapped if mapped else None,
         created_at=row.created_at,
@@ -63,26 +76,63 @@ def update_app_params(payload: AppParamUpdate) -> AppParamRead:
 
 
 @router.post("", response_model=ProviderConfigRead, status_code=status.HTTP_201_CREATED)
-def create_provider(payload: ProviderConfigCreate) -> ProviderConfigRead:
+async def create_provider(payload: ProviderConfigCreate) -> ProviderConfigRead:
     row = provider_repo.get(payload.name)
     if row is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"provider already exists: {payload.name}")
-    created = provider_repo.upsert(payload.name, url=payload.url, icon=payload.icon)
+    created = provider_repo.upsert(
+        payload.name,
+        url=payload.url,
+        icon=payload.icon,
+        need_login=payload.need_login,
+        enable=payload.enable,
+        lock=payload.lock
+    )
     # 新增 provider 后自动 discover session，保持同步
     from src.api.routers.sessions import discover_sessions
-    discover_sessions()
+    await discover_sessions()
+    
+    if payload.enable:
+        tid = _get_worker_thread_id(payload.name)
+        if not tid:
+            start_worker_thread(payload.name)
+            
     return _to_read(created)
 
 
 @router.put("/{provider_name}", response_model=ProviderConfigRead)
-def update_provider(provider_name: str, payload: ProviderConfigUpdate) -> ProviderConfigRead:
+async def update_provider(provider_name: str, payload: ProviderConfigUpdate) -> ProviderConfigRead:
     row = provider_repo.get(provider_name)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"provider not found: {provider_name}")
-    updated = provider_repo.upsert(provider_name, url=payload.url, icon=payload.icon)
+    updated = provider_repo.upsert(
+        provider_name,
+        url=payload.url,
+        icon=payload.icon,
+        need_login=payload.need_login,
+        enable=payload.enable,
+        lock=payload.lock
+    )
     # provider 更新后自动 discover session，保持同步
     from src.api.routers.sessions import discover_sessions
-    discover_sessions()
+    await discover_sessions()
+    
+    # 动态调配后台线程启停
+    if not payload.enable and row.enable:
+        tid = _get_worker_thread_id(provider_name)
+        if tid:
+            put_command(WorkerCommand(
+                command_id=str(uuid4()),
+                command_type="stop_thread",
+                params={},
+                target_thread_id=tid
+            ))
+        session_repo.delete_by_provider(provider_name)
+    elif payload.enable and not row.enable:
+        tid = _get_worker_thread_id(provider_name)
+        if not tid:
+            start_worker_thread(provider_name)
+            
     return _to_read(updated)
 
 
@@ -94,12 +144,20 @@ def delete_provider(provider_name: str) -> dict[str, bool]:
             detail=f"builtin provider cannot be deleted: {provider_name}",
         )
 
+    row = provider_repo.get(provider_name)
+    if row and row.lock:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"provider is locked and cannot be deleted: {provider_name}",
+        )
+
+    # 自动清理相关 session，避免触发外键约束错误
+    cleared_count = session_repo.delete_by_provider(provider_name)
+
     deleted = provider_repo.delete(provider_name)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"provider not found: {provider_name}")
 
-    # 自动清理相关 session
-    cleared_count = session_repo.delete_by_provider(provider_name)
     return {"deleted": True, "sessions_cleared": cleared_count}
 
 
@@ -108,6 +166,9 @@ async def open_provider(provider_name: str) -> ProviderOpenResponse:
     row = provider_repo.get(provider_name)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"provider not found: {provider_name}")
+
+    if not row.enable:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"provider is disabled: {provider_name}")
 
     mapped = _map_session_provider(row.name)
     if mapped is not None:

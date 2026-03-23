@@ -323,9 +323,9 @@ class ProviderConfigRepository:
             session.flush()
             return True
         
-    DEFAULTS: dict[str, dict[str, str]] = {
-        "mock_openai": {"url": "http://127.0.0.1:8010/", "icon": "🧪"},
-        "deepseek": {"url": "https://chat.deepseek.com/", "icon": "🤖"},
+    DEFAULTS: dict[str, dict[str, str | bool]] = {
+        "mock_openai": {"url": "http://127.0.0.1:8010/", "icon": "🧪", "need_login": False, "enable": True, "lock": True},
+        "deepseek": {"url": "https://chat.deepseek.com/", "icon": "🤖", "need_login": True, "enable": True, "lock": True},
     }
 
     def ensure_defaults(self) -> None:
@@ -338,6 +338,9 @@ class ProviderConfigRepository:
                         name=name,
                         url=value["url"],
                         icon=value["icon"],
+                        need_login=value.get("need_login", True),
+                        enable=value.get("enable", True),
+                        lock=value.get("lock", False),
                         created_at=now,
                         updated_at=now,
                     )
@@ -354,7 +357,7 @@ class ProviderConfigRepository:
         with session_scope() as session:
             return session.get(ProviderConfigORM, name)
 
-    def upsert(self, name: str, *, url: str, icon: str) -> ProviderConfigORM:
+    def upsert(self, name: str, *, url: str, icon: str, need_login: bool = True, enable: bool = True, lock: bool = False) -> ProviderConfigORM:
         now = datetime.now(UTC)
         with session_scope() as session:
             row = session.get(ProviderConfigORM, name)
@@ -363,6 +366,9 @@ class ProviderConfigRepository:
                     name=name,
                     url=url,
                     icon=icon,
+                    need_login=need_login,
+                    enable=enable,
+                    lock=lock,
                     created_at=now,
                     updated_at=now,
                 )
@@ -370,6 +376,9 @@ class ProviderConfigRepository:
             else:
                 row.url = url
                 row.icon = icon
+                row.need_login = need_login
+                row.enable = enable
+                row.lock = lock
                 row.updated_at = now
             session.flush()
             session.refresh(row)

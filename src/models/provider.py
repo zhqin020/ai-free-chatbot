@@ -18,17 +18,26 @@ class ProviderConfigCreate(BaseModel):
     name: str = Field(min_length=1)
     url: str = Field(min_length=1)
     icon: str = Field(min_length=1)
+    need_login: bool = False
+    enable: bool = True
+    lock: bool = False
 
 
 class ProviderConfigUpdate(BaseModel):
     url: str = Field(min_length=1)
     icon: str = Field(min_length=1)
+    need_login: bool = False
+    enable: bool = True
+    lock: bool = False
 
 
 class ProviderConfigRead(BaseModel):
     name: str
     url: str
     icon: str
+    need_login: bool
+    enable: bool
+    lock: bool
     builtin: bool
     session_provider: str | None = None
     created_at: datetime

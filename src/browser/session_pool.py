@@ -148,6 +148,12 @@ class ProviderSessionPool:
                 storage_state_path=str(state_file),
                 user_data_dir=str(user_data_dir),
             )
+            from src.storage.repositories import ProviderConfigRepository
+            repo = ProviderConfigRepository()
+            provider_row = repo.get(provider)
+            if provider_row and not provider_row.need_login:
+                logger.info("pool.get_page clearing cookies because need_login=False key=%s", key)
+                await controller.context.clear_cookies()
             page = await controller.open_page(url)
             self._entries[key] = _PoolEntry(
                 controller=controller,
@@ -187,6 +193,9 @@ class ProviderSessionPool:
         for session_id in list(self._entries.keys()):
             await self._close_entry(session_id)
 
+    async def close_provider_session(self, provider: str) -> None:
+        await self._close_entry(provider)
+
     async def _close_entry(self, key: str) -> None:
         entry = self._entries.pop(key, None)
         if entry is None:
@@ -194,7 +203,8 @@ class ProviderSessionPool:
             return
         logger.info("pool.close_entry begin key=%s", key)
         try:
-            provider, session_id = key.split(":", 1)
+            provider = entry.provider
+            session_id = entry.session_id
             state_file = self._state_file(provider, session_id)
             await entry.controller.save_storage_state(str(state_file))
             logger.debug("pool.close_entry saved storage state key=%s file=%s", key, state_file)
@@ -245,6 +255,12 @@ async def get_or_create_provider_session(provider: str, session_id: str, url: st
         storage_state_path=str(state_file),
         user_data_dir=str(user_data_dir),
     )
+    from src.storage.repositories import ProviderConfigRepository
+    repo = ProviderConfigRepository()
+    provider_row = repo.get(provider)
+    if provider_row and not provider_row.need_login:
+        logger.info("pool.get_or_create_provider_session clearing cookies because need_login=False key=%s", key)
+        await controller.context.clear_cookies()
     page = await controller.open_page(url)
     pool._entries[key] = _PoolEntry(controller=controller, page=page, url=url, thread_id=current_thread, session_id=session_id, provider=provider)
     return page

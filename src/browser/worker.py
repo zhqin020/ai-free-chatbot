@@ -68,7 +68,6 @@ def start_worker_thread(provider: str, logger=None) -> '__import__("threading").
             chat_url = provider_row.url if provider_row and provider_row.url else "about:blank"
         session_id = f"s-{provider}-1"
         owner = str(threading.get_ident())
-        session_manager.get_or_create(session_id, provider, chat_url, owner)
         if logger:
             logger.info(f"[worker] 启动线程: provider={provider} thread_id={owner} pid={os.getpid()} url={chat_url}")
         print(f"[worker-thread-debug] provider={provider} thread_id={owner} pid={os.getpid()} url={chat_url}")
@@ -83,11 +82,22 @@ def start_worker_thread(provider: str, logger=None) -> '__import__("threading").
             session_pool=pool,
         )
         async def run():
+            await session_manager.get_or_create(session_id, provider, chat_url, owner)
             await get_or_create_provider_session(provider, session_id, chat_url)
-            while True:
-                active = await processor.run_once()
-                if not active:
-                    await asyncio.sleep(0.5)
+            try:
+                while True:
+                    active = await processor.run_once()
+                    if not active:
+                        await asyncio.sleep(0.5)
+            except StopWorkerException:
+                if logger:
+                    logger.info(f"[worker] provider {provider} 收到中止指令，退出后台循环。")
+            finally:
+                try:
+                    await pool.close_provider_session(provider)
+                except Exception as exc:
+                    if logger:
+                        logger.error(f"[worker] provider {provider} 清理 session 异常: {exc}")
         loop.run_until_complete(run())
 
     t = threading.Thread(target=worker_thread, name=f"WorkerThread-{provider}", daemon=True)
@@ -104,7 +114,7 @@ def start_all_worker_threads(logger=None):
 
     with session_scope() as session:
         provider_rows = session.execute(select(ProviderConfigORM)).scalars().all()
-        providers = sorted(set(row.name for row in provider_rows if row.name))
+        providers = sorted(set(row.name for row in provider_rows if row.name and row.enable))
         
     if not providers:
         if logger:
@@ -117,6 +127,9 @@ def start_all_worker_threads(logger=None):
         threads.append(t)
     return threads
 
+
+class StopWorkerException(Exception):
+    pass
 
 
 @dataclass
@@ -511,6 +524,9 @@ class PooledProviderTaskProcessor:
                     status="success",
                     result={"ready": True}
                 ))
+        elif cmd.command_type == "stop_thread":
+            logger.info(f"Stopping worker thread for provider {self.provider}")
+            raise StopWorkerException()
         elif cmd.command_type == "mark_login_ok":
             # 检测页面 ready 并提取 selectors
             import traceback
@@ -696,7 +712,9 @@ class ThreadedWorkerManager:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 from src.browser.session_manager import session_manager
-                page = session_manager.get_or_create(session_id, provider, url, threading.get_ident())
+                page = loop.run_until_complete(
+                    session_manager.get_or_create(session_id, provider, url, threading.get_ident())
+                )
                 self.thread_local.page = page
                 return task_fn(page, *args, **kwargs)
         fut = self.executor.submit(thread_task, *args, **kwargs)
