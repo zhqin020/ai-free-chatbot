@@ -202,11 +202,105 @@ def get_command_result(command_id: str, timeout: float = 10.0) -> Optional[Worke
     return found
 
 
+
+async def _llm_extract_selectors(dom: str, expected_selectors: list[str], current_provider: str, logger=None) -> dict:
+    from src.storage.repositories import TaskRepository
+    from src.models.task import TaskCreate, TaskStatus
+    from src.parser.response_extractor import ResponseExtractor
+    from src.browser.session_pool import get_global_provider_session_pool
+    import asyncio
+    import time
+
+    task_repo = TaskRepository()
+    pool = get_global_provider_session_pool()
+    
+    # 查找除当前 provider 外第一个 READY 的作为“内置助手”
+    ready_entry = None
+    for p_name, entry in pool._entries.items():
+        if p_name != current_provider and entry and not getattr(entry.page, "is_closed", lambda: True)():
+            ready_entry = entry
+            break
+    
+    if not ready_entry:
+        if logger:
+            logger.warning(f"[_llm_extract_selectors] No other READY provider found to help extraction for {current_provider}")
+        return {}
+
+    prompt = f"""# Role: AI Chat Scraper Expert
+# Task: Identify CSS selectors for robot automation in the provided DOM.
+# Target Elements:
+1. 'new_chat_selector': Button/link to start a new chat.
+2. 'input_selector': Text field or contenteditable div for typing messages.
+3. 'send_button_selector': The submit/send button.
+4. 'reply_selector': The container for the AI assistant's responses (e.g. '.ds-markdown', '.assistant-message').
+
+# Constraints:
+- Return ONLY a valid JSON object. 
+- No markdown formatting. 
+- Use "" if not found.
+- Ensure selectors are specific for Playwright.
+
+# Output JSON Template:
+{{
+  "new_chat_selector": "",
+  "input_selector": "",
+  "send_button_selector": "",
+  "reply_selector": ""
+}}
+
+# Minimized DOM Content:
+{dom}"""
+
+    # 创建内部任务
+    try:
+        payload = TaskCreate(
+            prompt=prompt,
+            document_text="INTERNAL_DOM_ANALYSIS",
+            owner=str(ready_entry.thread_id),
+            session_id=ready_entry.session_id,
+            provider=ready_entry.provider
+        )
+        task_row = task_repo.create(payload)
+        task_id = task_row.id
+        if logger:
+            logger.info(f"[_llm_extract_selectors] Created internal task {task_id} assigned to {ready_entry.provider} (thread {ready_entry.thread_id})")
+        
+        # 轮询状态
+        timeout = 60
+        start_t = time.time()
+        while time.time() - start_t < timeout:
+            row = task_repo.get(task_id)
+            if row.status == TaskStatus.COMPLETED:
+                raw_row = task_repo.get_latest_raw_response(task_id)
+                if raw_row and raw_row.response_text:
+                    extractor = ResponseExtractor()
+                    res = extractor.extract_json_candidate(raw_row.response_text)
+                    if logger:
+                        logger.info(f"[_llm_extract_selectors] Task {task_id} completed. Extracted: {res}")
+                    return res or {}
+                break
+            elif row.status in (TaskStatus.FAILED, TaskStatus.CRITICAL):
+                if logger:
+                    logger.error(f"[_llm_extract_selectors] Internal task {task_id} failed with status {row.status}")
+                break
+            await asyncio.sleep(1)
+        
+        if logger:
+            logger.warning(f"[_llm_extract_selectors] Internal task {task_id} timed out.")
+    except Exception as e:
+        if logger:
+            logger.exception(f"[_llm_extract_selectors] Failed to create or wait for internal task: {e}")
+    
+    return {}
+
+
 async def auto_extract_chat_selectors(provider: str, session_id: str, session_pool, logger=None) -> dict:
     """
     自动提取 chat 页面 input/send/response selector，供 API 填充 provider_configs。
+    尝试发送 'hello' 并提取精简版 DOM，交由 LLM 识别。
     """
     if logger is None:
+        import logging
         logger = logging.getLogger('browser.worker')
     if session_pool is None:
         raise RuntimeError("session_pool must be passed explicitly to auto_extract_chat_selectors!")
@@ -219,143 +313,113 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
     page = await pool.get_page(session_id=session_id, url=row.chat_url, provider=provider)
     selectors = {}
     logger.info(f"[auto_extract_chat_selectors] provider={provider} session_id={session_id} page_url={getattr(page, 'url', None)} 开始提取 selector")
-    # 输入框区域
+    
+    # 启发式提取输入框和发送按钮
     input_candidates = [
-        # 精确匹配 deepseek 特有 placeholder
-        "textarea[placeholder='Message DeepSeek']",
-        "textarea[data-testid='chat-input']",
-        "textarea[placeholder*='message' i]",
-        "div[contenteditable='true']",
-        "textarea",
-        "input[type='text']",
-        "[contenteditable='true']",
-        "textarea[aria-label]",
-        "input[aria-label]",
+        "textarea[placeholder='Message DeepSeek']", "textarea[data-testid='chat-input']",
+        "textarea[placeholder*='message' i]", "div[contenteditable='true']",
+        "textarea", "input[type='text']", "[contenteditable='true']",
+        "textarea[aria-label]", "input[aria-label]"
     ]
-    input_found = []
+    input_sel = None
     for sel in input_candidates:
         try:
-            el = page.locator(sel).first
-            if await el.is_visible():
-                input_found.append(sel)
-        except Exception:
-            continue
-    if input_found:
-        selectors["input_selector"] = input_found[0]
-        selectors["input_selector_candidates"] = input_found
+            if await page.locator(sel).first.is_visible():
+                input_sel = sel
+                break
+        except Exception: pass
 
-    # 发送按钮区域
     send_candidates = [
-        "button[data-testid='send-button']",
-        "button[aria-label*='send' i]",
-        "button:has-text('Send')",
-        "button:has-text('发送')",
-        "button[type='submit']",
-        "div[role='button'].ds-icon-button",
-        "div.ds-icon-button[role='button']",
-        "div[role='button']",
+        "button[data-testid='send-button']", "button[aria-label*='send' i]",
+        "button:has-text('Send')", "button:has-text('发送')", "button[type='submit']",
+        "div[role='button'].ds-icon-button", "div.ds-icon-button[role='button']", "div[role='button']"
     ]
-    send_found = []
-    for sel in send_candidates:
+    send_sel = None
+
+    if input_sel:
+        selectors["input_selector"] = input_sel
         try:
-            el = page.locator(sel).first
-            if await el.is_visible():
-                send_found.append(sel)
-        except Exception:
-            continue
-    if send_found:
-        selectors["send_button_selector"] = send_found[0]
-        selectors["send_button_selector_candidates"] = send_found
-    logger.info(f"[auto_extract_chat_selectors] send_found: {send_found}")
+            # 输入 hello
+            await page.locator(input_sel).first.fill("hello")
+            await page.wait_for_timeout(500)
+            
+            # 再找发送按钮
+            for sel in send_candidates:
+                if await page.locator(sel).first.is_visible():
+                    send_sel = sel
+                    break
+            
+            if send_sel:
+                selectors["send_button_selector"] = send_sel
+                await page.locator(send_sel).first.click()
+                logger.info("[auto_extract_chat_selectors] 发送了 'hello' 测试消息，等待响应加载...")
+                await page.wait_for_timeout(5000) # 等待渲染回复
+            else:
+                # 尝试 Enter 键发送
+                await page.locator(input_sel).first.press("Enter")
+                logger.info("[auto_extract_chat_selectors] 回车发送了 'hello' 测试消息...")
+                await page.wait_for_timeout(5000)
+        except Exception as e:
+            logger.warning(f"[auto_extract_chat_selectors] 向页面发送 hello 失败: {e}")
 
-    # 新建对话按钮区域
-    new_chat_candidates = [
-        "button:has-text('New chat')",
-        "button[data-testid='new-chat']",
-        "a:has-text('New chat')",
-        "a[data-testid='new-chat']",
-    ]
-    new_chat_found = []
-    for sel in new_chat_candidates:
-        try:
-            el = page.locator(sel).first
-            if await el.is_visible():
-                new_chat_found.append(sel)
-        except Exception:
-            continue
-    if new_chat_found:
-        selectors["new_chat_selector"] = new_chat_found[0]
-        selectors["new_chat_selector_candidates"] = new_chat_found
-
-
-    # 回复区域（assistant/message/reply）增强：优先检测 .ds-message 结构
-    reply_candidates = [
-        "message-content",
-        "model-response",
-        "[data-testid='assistant-message']",
-        "div.message.assistant",
-        "article[data-role='assistant']",
-        ".message, .response, .chat-message",
-        "div[role='log']",
-        "article",
-        ".ds-message .ds-markdown",
-        ".ds-message:last-of-type .ds-markdown",
-        "div.ds-message:last-of-type div.ds-markdown",
-        "p.ds-markdown",
-        "p[class*='markdown']",
-    ]
-    reply_found = []
-    best_selector = None
-    best_text = ""
-    # 优先检测唯一结构
+    # 获取 DOM 精简样本保存
+    dom_script = """
+        () => {
+            const clone = document.body.cloneNode(true);
+            const removeTags = ['script', 'style', 'svg', 'path', 'img', 'noscript', 'meta', 'link', 'iframe'];
+            clone.querySelectorAll(removeTags.join(',')).forEach(e => e.remove());
+            // Remove huge attributes
+            clone.querySelectorAll('*').forEach(e => {
+                if(e.hasAttribute('class') && e.getAttribute('class').length > 50) e.removeAttribute('class');
+            });
+            return clone.innerHTML;
+        }
+    """
+    dom_sample = ""
     try:
-        msg_count = await page.locator('.ds-message').count()
-        if msg_count > 0:
-            # 检查 .ds-message:last-of-type .ds-markdown 是否可见且有内容
-            el = page.locator('.ds-message:last-of-type .ds-markdown')
-            if await el.first.is_visible():
-                texts = await el.all_inner_texts()
-                text = "\n".join([t for t in texts if t.strip()])
-                if text:
-                    selectors["reply_selector"] = ".ds-message:last-of-type .ds-markdown"
-                    reply_found.append(".ds-message:last-of-type .ds-markdown")
-                    # 兼容其它候选
-                    if await page.locator('.ds-message .ds-markdown').first.is_visible():
-                        reply_found.append('.ds-message .ds-markdown')
-                    if await page.locator('div.ds-message:last-of-type div.ds-markdown').first.is_visible():
-                        reply_found.append('div.ds-message:last-of-type div.ds-markdown')
-                    # 兼容原有
-                    if await page.locator('p.ds-markdown').first.is_visible():
-                        reply_found.append('p.ds-markdown')
-                    if await page.locator('p[class*="markdown"]').first.is_visible():
-                        reply_found.append('p[class*="markdown"]')
-                    selectors["reply_selector_candidates"] = reply_found
-                    logger.info(f"[auto_extract_chat_selectors] reply_found: {reply_found}")
-                    return selectors
-    except Exception:
-        pass
-    # 回退原有逻辑
-    for sel in reply_candidates:
-        try:
-            el = page.locator(sel)
-            if await el.first.is_visible():
-                texts = await el.all_inner_texts()
-                text = "\n".join([t for t in texts if t.strip()])
-                if text:
-                    reply_found.append(sel)
-                if text and len(text) > len(best_text):
-                    best_selector = sel
-                    best_text = text
-        except Exception:
-            continue
-    if best_selector:
-        selectors["reply_selector"] = best_selector
-    if reply_found:
-        selectors["reply_selector_candidates"] = reply_found
-    logger.info(f"[auto_extract_chat_selectors] reply_found: {reply_found}")
+        dom_sample = await page.evaluate(dom_script)
+        # limit length
+        if len(dom_sample) > 30000:
+            dom_sample = dom_sample[:30000] + "...(truncated)"
+    except Exception as e:
+        logger.warning(f"Failed to extract DOM: {e}")
+    
+    selectors["dom_sample"] = dom_sample
 
-    logger.info(f"[auto_extract_chat_selectors] provider={provider} session_id={session_id} 提取结果: {selectors}")
+    # 调用 LLM 进一步提取
+    expected = ["new_chat_selector", "input_selector", "send_button_selector", "reply_selector"]
+    if dom_sample:
+        llm_selectors = await _llm_extract_selectors(dom_sample, expected, provider, logger)
+        if llm_selectors:
+            for k in expected:
+                if llm_selectors.get(k):
+                    selectors[k] = llm_selectors[k]
+                    
+    # 如果启发式优先，或者 LLM 未返回：
+    if input_sel and "input_selector" not in selectors:
+        selectors["input_selector"] = input_sel
+    if send_sel and "send_button_selector" not in selectors:
+        selectors["send_button_selector"] = send_sel
+    
+    # 最后兜底 reply area 的启发式
+    if not selectors.get("reply_selector"):
+        reply_candidates = [
+            ".ds-message:last-of-type .ds-markdown", "div.message.assistant",
+            "article[data-role='assistant']", ".message, .response, .chat-message",
+            "p.ds-markdown"
+        ]
+        for sel in reply_candidates:
+            try:
+                if await page.locator(sel).first.is_visible():
+                    selectors["reply_selector"] = sel
+                    break
+            except Exception: pass
+
+    logger.info(f"[auto_extract_chat_selectors] Final selectors extracted: {{k: selectors[k] for k in selectors if k != 'dom_sample'}}")
     return selectors
+
+
+
 
 
 
@@ -539,28 +603,22 @@ class PooledProviderTaskProcessor:
                     logger=logger
                 )
                 logger.info(f"[mark_login_ok] selectors 提取结果: {selectors}")
-                # 增量合并 ready_selectors_json，未采集到的 selector 字段保留原值
+                # 采用新独立字段体系保存 selectors
                 repo = ProviderConfigRepository()
-                old_row = repo.get(self.provider)
-                import json
-                old_selectors = {}
-                if old_row and old_row.ready_selectors_json:
-                    try:
-                        old_selectors = json.loads(old_row.ready_selectors_json)
-                    except Exception:
-                        old_selectors = {}
-                merged = dict(old_selectors)
-                for k, v in selectors.items():
-                    if v:
-                        merged[k] = v
-                logger.info(f"[mark_login_ok] update_ready_selectors 调用: provider={self.provider} merged_selectors={merged}")
+                logger.info(f"[mark_login_ok] update_selectors 调用: provider={self.provider}")
                 try:
-                    repo.update_ready_selectors(self.provider, merged)
-                    logger.info(f"[mark_login_ok] update_ready_selectors 成功: provider={self.provider}")
+                    repo.update_selectors(
+                        self.provider,
+                        new_chat_selector=selectors.get("new_chat_selector"),
+                        input_selector=selectors.get("input_selector"),
+                        send_button_selector=selectors.get("send_button_selector"),
+                        reply_selector=selectors.get("reply_selector"),
+                        dom_sample=selectors.get("dom_sample")
+                    )
+                    logger.info(f"[mark_login_ok] update_selectors 成功: provider={self.provider}")
                 except Exception as db_exc:
-                    logger.error(f"[mark_login_ok] update_ready_selectors 异常: {db_exc}\n{traceback.format_exc()}")
-                    # 继续返回 success，人工兜底
-                # 只要用户点击“标记就绪”，都返回 success，ready 字段仅供参考
+                    logger.error(f"[mark_login_ok] update_selectors 异常: {db_exc}\\n{traceback.format_exc()}")
+                
                 ready = bool(selectors.get("input_selector") and selectors.get("send_button_selector") and selectors.get("reply_selector"))
                 missing = []
                 for k in ("input_selector", "send_button_selector", "reply_selector"):

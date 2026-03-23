@@ -100,6 +100,26 @@
 						<label class="checkbox-label">
 							<input id="provider-lock" type="checkbox" /> Lock
 						</label>
+						<label>
+							New Chat Selector
+							<input id="provider-new-chat-selector" placeholder=".new-chat-btn" />
+						</label>
+						<label>
+							Input Selector
+							<input id="provider-input-selector" placeholder="textarea" />
+						</label>
+						<label>
+							Send Button Selector
+							<input id="provider-send-button-selector" placeholder="button[type='submit']" />
+						</label>
+						<label>
+							Reply Selector
+							<input id="provider-reply-selector" placeholder=".message.assistant" />
+						</label>
+						<label class="span-3">
+							DOM Sample (Read-only)
+							<textarea id="provider-dom-sample" readonly rows="3" placeholder="LLM 识别出的 DOM 样本将显示在这里"></textarea>
+						</label>
 						<div class="actions span-3">
 							<button id="submit-btn" type="submit" class="btn btn-primary">Create</button>
 							<button id="reset-btn" type="button" class="btn btn-ghost">Reset</button>

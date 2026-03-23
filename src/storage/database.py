@@ -55,8 +55,17 @@ class ProviderConfigORM(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     icon: Mapped[str] = mapped_column(String(256), nullable=False)
 
-    # 新增：用于存储 chat ready 页面特征（selectors），JSON 字符串
+    # 新增：用于存储 chat ready 页面特征（selectors），JSON 字符串 (Deprecated, use independent fields below)
     ready_selectors_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 拆分独立维护的 selector 字段
+    new_chat_selector: Mapped[str | None] = mapped_column(Text, nullable=True)
+    input_selector: Mapped[str | None] = mapped_column(Text, nullable=True)
+    send_button_selector: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reply_selector: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 新增：保存获取的整个测试页面 DOM
+    dom_sample: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 新增：优先级字段，默认100，可按Provider分配
     priority: Mapped[int] = mapped_column(Integer, default=100, nullable=False)

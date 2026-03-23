@@ -49,6 +49,11 @@ def _to_read(row: ProviderConfigORM) -> ProviderConfigRead:
         lock=row.lock,
         builtin=row.name in provider_repo.DEFAULTS,
         session_provider=mapped if mapped else None,
+        new_chat_selector=row.new_chat_selector,
+        input_selector=row.input_selector,
+        send_button_selector=row.send_button_selector,
+        reply_selector=row.reply_selector,
+        dom_sample=row.dom_sample,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -86,7 +91,12 @@ async def create_provider(payload: ProviderConfigCreate) -> ProviderConfigRead:
         icon=payload.icon,
         need_login=payload.need_login,
         enable=payload.enable,
-        lock=payload.lock
+        lock=payload.lock,
+        new_chat_selector=payload.new_chat_selector,
+        input_selector=payload.input_selector,
+        send_button_selector=payload.send_button_selector,
+        reply_selector=payload.reply_selector,
+        dom_sample=payload.dom_sample,
     )
     # 新增 provider 后自动 discover session，保持同步
     from src.api.routers.sessions import discover_sessions
@@ -111,7 +121,12 @@ async def update_provider(provider_name: str, payload: ProviderConfigUpdate) -> 
         icon=payload.icon,
         need_login=payload.need_login,
         enable=payload.enable,
-        lock=payload.lock
+        lock=payload.lock,
+        new_chat_selector=payload.new_chat_selector,
+        input_selector=payload.input_selector,
+        send_button_selector=payload.send_button_selector,
+        reply_selector=payload.reply_selector,
+        dom_sample=payload.dom_sample,
     )
     # provider 更新后自动 discover session，保持同步
     from src.api.routers.sessions import discover_sessions

@@ -306,19 +306,33 @@ class TaskRepository:
 
 
 class ProviderConfigRepository:
-    def update_ready_selectors(self, name: str, selectors: dict) -> bool:
+    def update_selectors(
+        self,
+        name: str,
+        *,
+        new_chat_selector: str | None = None,
+        input_selector: str | None = None,
+        send_button_selector: str | None = None,
+        reply_selector: str | None = None,
+        dom_sample: str | None = None
+    ) -> bool:
         from src import logging_mp
         logger = logging_mp.get_logger("storage.repositories")
-        logger.info(f"[update_ready_selectors] provider={name} selectors={selectors}")
-        """
-        更新 provider 的 ready_selectors_json 字段，selectors 为 dict，将以 JSON 字符串存储。
-        """
-        import json
+        logger.info(f"[update_selectors] provider={name}")
         with session_scope() as session:
             row = session.get(ProviderConfigORM, name)
             if row is None:
                 return False
-            row.ready_selectors_json = json.dumps(selectors, ensure_ascii=False)
+            if new_chat_selector is not None:
+                row.new_chat_selector = new_chat_selector
+            if input_selector is not None:
+                row.input_selector = input_selector
+            if send_button_selector is not None:
+                row.send_button_selector = send_button_selector
+            if reply_selector is not None:
+                row.reply_selector = reply_selector
+            if dom_sample is not None:
+                row.dom_sample = dom_sample
             row.updated_at = datetime.now(UTC)
             session.flush()
             return True
@@ -357,7 +371,21 @@ class ProviderConfigRepository:
         with session_scope() as session:
             return session.get(ProviderConfigORM, name)
 
-    def upsert(self, name: str, *, url: str, icon: str, need_login: bool = True, enable: bool = True, lock: bool = False) -> ProviderConfigORM:
+    def upsert(
+        self,
+        name: str,
+        *,
+        url: str,
+        icon: str,
+        need_login: bool = True,
+        enable: bool = True,
+        lock: bool = False,
+        new_chat_selector: str | None = None,
+        input_selector: str | None = None,
+        send_button_selector: str | None = None,
+        reply_selector: str | None = None,
+        dom_sample: str | None = None
+    ) -> ProviderConfigORM:
         now = datetime.now(UTC)
         with session_scope() as session:
             row = session.get(ProviderConfigORM, name)
@@ -369,6 +397,11 @@ class ProviderConfigRepository:
                     need_login=need_login,
                     enable=enable,
                     lock=lock,
+                    new_chat_selector=new_chat_selector,
+                    input_selector=input_selector,
+                    send_button_selector=send_button_selector,
+                    reply_selector=reply_selector,
+                    dom_sample=dom_sample,
                     created_at=now,
                     updated_at=now,
                 )
@@ -379,6 +412,16 @@ class ProviderConfigRepository:
                 row.need_login = need_login
                 row.enable = enable
                 row.lock = lock
+                if new_chat_selector is not None:
+                    row.new_chat_selector = new_chat_selector
+                if input_selector is not None:
+                    row.input_selector = input_selector
+                if send_button_selector is not None:
+                    row.send_button_selector = send_button_selector
+                if reply_selector is not None:
+                    row.reply_selector = reply_selector
+                if dom_sample is not None:
+                    row.dom_sample = dom_sample
                 row.updated_at = now
             session.flush()
             session.refresh(row)

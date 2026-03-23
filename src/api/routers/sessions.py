@@ -244,7 +244,7 @@ async def mark_login_ok(session_id: str, request: Request) -> SessionRead:
     )
     put_command(command)
     logger.info(f"[worker] mark-login-ok enqueued: command_id={command_id} target_thread_id={target_thread_id}")
-    result = get_command_result(command_id, timeout=10.0)
+    result = get_command_result(command_id, timeout=60.0)
     if not result or result.status != "success":
         raise HTTPException(status_code=500, detail=f"worker mark_login_ok failed: {getattr(result, 'error_message', None)}")
     # 刷新 row

@@ -21,6 +21,11 @@ class ProviderConfigCreate(BaseModel):
     need_login: bool = False
     enable: bool = True
     lock: bool = False
+    new_chat_selector: str | None = None
+    input_selector: str | None = None
+    send_button_selector: str | None = None
+    reply_selector: str | None = None
+    dom_sample: str | None = None
 
 
 class ProviderConfigUpdate(BaseModel):
@@ -29,6 +34,11 @@ class ProviderConfigUpdate(BaseModel):
     need_login: bool = False
     enable: bool = True
     lock: bool = False
+    new_chat_selector: str | None = None
+    input_selector: str | None = None
+    send_button_selector: str | None = None
+    reply_selector: str | None = None
+    dom_sample: str | None = None
 
 
 class ProviderConfigRead(BaseModel):
@@ -40,6 +50,11 @@ class ProviderConfigRead(BaseModel):
     lock: bool
     builtin: bool
     session_provider: str | None = None
+    new_chat_selector: str | None = None
+    input_selector: str | None = None
+    send_button_selector: str | None = None
+    reply_selector: str | None = None
+    dom_sample: str | None = None
     created_at: datetime
     updated_at: datetime
 

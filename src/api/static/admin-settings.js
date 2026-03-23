@@ -85,6 +85,11 @@ const nodes = {
 	needLogin: document.getElementById("provider-need-login"),
 	enable: document.getElementById("provider-enable"),
 	lock: document.getElementById("provider-lock"),
+	newChatSelector: document.getElementById("provider-new-chat-selector"),
+	inputSelector: document.getElementById("provider-input-selector"),
+	sendButtonSelector: document.getElementById("provider-send-button-selector"),
+	replySelector: document.getElementById("provider-reply-selector"),
+	domSample: document.getElementById("provider-dom-sample"),
 	submit: document.getElementById("submit-btn"),
 	reset: document.getElementById("reset-btn"),
 	refresh: document.getElementById("refresh-btn"),
@@ -120,6 +125,11 @@ function resetForm() {
 	if (nodes.needLogin) nodes.needLogin.checked = false;
 	if (nodes.enable) nodes.enable.checked = true;
 	if (nodes.lock) nodes.lock.checked = false;
+	if (nodes.newChatSelector) nodes.newChatSelector.value = "";
+	if (nodes.inputSelector) nodes.inputSelector.value = "";
+	if (nodes.sendButtonSelector) nodes.sendButtonSelector.value = "";
+	if (nodes.replySelector) nodes.replySelector.value = "";
+	if (nodes.domSample) nodes.domSample.value = "";
 	nodes.formTitle.textContent = "Create Provider";
 	nodes.submit.textContent = "Create";
 }
@@ -134,6 +144,11 @@ function fillForEdit(row) {
 	if (nodes.needLogin) nodes.needLogin.checked = (row.need_login ?? false);
 	if (nodes.enable) nodes.enable.checked = (row.enable ?? true);
 	if (nodes.lock) nodes.lock.checked = (row.lock ?? false);
+	if (nodes.newChatSelector) nodes.newChatSelector.value = row.new_chat_selector || "";
+	if (nodes.inputSelector) nodes.inputSelector.value = row.input_selector || "";
+	if (nodes.sendButtonSelector) nodes.sendButtonSelector.value = row.send_button_selector || "";
+	if (nodes.replySelector) nodes.replySelector.value = row.reply_selector || "";
+	if (nodes.domSample) nodes.domSample.value = row.dom_sample || "";
 	nodes.formTitle.textContent = `Edit Provider: ${row.name}`;
 	nodes.submit.textContent = "Update";
 }
@@ -188,6 +203,10 @@ function readPayload() {
 		need_login: nodes.needLogin ? nodes.needLogin.checked : false,
 		enable: nodes.enable ? nodes.enable.checked : true,
 		lock: nodes.lock ? nodes.lock.checked : false,
+		new_chat_selector: nodes.newChatSelector ? nodes.newChatSelector.value.trim() : "",
+		input_selector: nodes.inputSelector ? nodes.inputSelector.value.trim() : "",
+		send_button_selector: nodes.sendButtonSelector ? nodes.sendButtonSelector.value.trim() : "",
+		reply_selector: nodes.replySelector ? nodes.replySelector.value.trim() : "",
 	};
 }
 
@@ -231,7 +250,11 @@ async function handleSubmit(event) {
 			icon: payload.icon,
 			need_login: payload.need_login,
 			enable: payload.enable,
-			lock: payload.lock 
+			lock: payload.lock,
+			new_chat_selector: payload.new_chat_selector || null,
+			input_selector: payload.input_selector || null,
+			send_button_selector: payload.send_button_selector || null,
+			reply_selector: payload.reply_selector || null,
 		});
 		showToast(`Provider updated: ${state.editingName}`);
 	} else {
