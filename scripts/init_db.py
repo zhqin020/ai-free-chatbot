@@ -1,6 +1,6 @@
-from __future__ import annotations
-
+import sys, os
 import argparse
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 from src.config import get_settings
 from src.logging_mp import setup_logging
@@ -28,9 +28,9 @@ def main() -> None:
     )
     print("[INFO] 正在初始化数据库表结构。当前系统仅保留 sessions 主表，已无 session_name、enabled、state、login_state 字段，也无 session_tracking 表。")
     print("[INFO] 如果你是从旧版本升级，需依次运行：\n"
-        "  scripts/migrate_sessions_provider_to_string.sql\n"
-        "  scripts/migrate_sessions_table.sql\n"
-        "  scripts/migrate_sessions_drop_enabled.sql\n"
+        "  scripts/migrations/migrate_sessions_provider_to_string.sql\n"
+        "  scripts/migrations/migrate_sessions_table.sql\n"
+        "  scripts/migrations/migrate_sessions_drop_enabled.sql\n"
         "以完成 provider 字段、会话表结构、enabled 字段的全部迁移！")
     init_db(echo=args.echo)
 
