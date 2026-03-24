@@ -1,10 +1,8 @@
-
-
-
-# 修复：future import 必须在文件最顶部，去除重复定义，整理结构
 from __future__ import annotations
+import logging
+import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from src.logging_mp import setup_logging, startlog
 
@@ -182,7 +180,9 @@ class DefaultProviderAdapter(ProviderAdapter):
         input_box = page.locator(input_selector).first
         await input_box.focus()
         await input_box.fill(full_text)
-        logger.info(f"[send_message] filled input_box with text and focused")
+        # 补丁：手动触发 input 事件，某些框架需要这个来激活发送按钮
+        await input_box.evaluate("el => el.dispatchEvent(new Event('input', { bubbles: true }))")
+        logger.info(f"[send_message] filled input_box and dispatched input event")
 
         # 优先点击发送按钮
         send_selector = await self._pick_visible_selector(page, self.send_button_selectors)
@@ -194,7 +194,6 @@ class DefaultProviderAdapter(ProviderAdapter):
                 await send_btn.scroll_into_view_if_needed()
                 await send_btn.click()
                 logger.info(f"[send_message] clicked send button: {send_selector}")
-                import asyncio
                 await asyncio.sleep(0.5)
                 # 检查输入框是否已清空，未清空则兜底回车
                 try:
@@ -214,41 +213,26 @@ class DefaultProviderAdapter(ProviderAdapter):
             except Exception as exc:
                 logger.error(f"[send_message] click send button failed: {exc}")
 
-        # 否则尝试回车发送
-        # 有些平台用 Control+Enter，有些用 Enter
+        # 否则尝试键盘发送
+        # 有些平台用 Enter，有些用 Control+Enter
+        # 我们先尝试 Enter，如果没反应（输入框没清空）再尝试 Control+Enter
         try:
-            await input_box.press("Control+Enter")
-            logger.info(f"[send_message] pressed Control+Enter")
-        except Exception as exc:
-            logger.warning(f"[send_message] Control+Enter failed: {exc}")
+            logger.info(f"[send_message] no send button, trying keyboard send...")
+            await input_box.press("Enter")
+            await asyncio.sleep(0.5)
+            
             try:
-                await input_box.press("Enter")
-                logger.info(f"[send_message] pressed Enter")
-            except Exception as exc2:
-                logger.error(f"[send_message] Enter failed: {exc2}")
+                value = await input_box.input_value()
+            except Exception:
+                value = await input_box.inner_text()
 
-        # === 新增：自动等待 response_selector/reply_selector 匹配元素出现，确保页面渲染 ===
-        import asyncio
-        selectors = list(self.response_selectors) if getattr(self, "response_selectors", None) else []
-        # fallback 兼容 reply_selector
-        fallback_selectors = [
-            'p.ds-markdown-paragraph',
-            '.ds-markdown-paragraph',
-            'p[class*="markdown"]',
-        ]
-        selectors += [s for s in fallback_selectors if s not in selectors]
-        found = False
-        for sel in selectors:
-            try:
-                logger.info(f"[send_message] wait_for_selector('{sel}') for reply area...")
-                await page.wait_for_selector(sel, timeout=3000)
-                found = True
-                logger.info(f"[send_message] reply area appeared: {sel}")
-                break
-            except Exception as exc:
-                logger.info(f"[send_message] wait_for_selector('{sel}') timeout or error: {exc}")
-        if not found:
-            logger.warning(f"[send_message] No reply area appeared after send, selectors tried: {selectors}")
+            if value.strip() != "":
+                logger.info(f"[send_message] Enter didn't clear input, trying Control+Enter")
+                await input_box.press("Control+Enter")
+                await asyncio.sleep(0.5)
+        except Exception as exc:
+            logger.error(f"[send_message] keyboard send failed: {exc}")
+
         await asyncio.sleep(0.2)
 
     async def wait_for_response(
@@ -258,12 +242,9 @@ class DefaultProviderAdapter(ProviderAdapter):
         timeout_ms: int = 60000,
     ) -> Optional[str]:
         """
-        通用 wait_for_response 实现：
-        1. 选取 response_selector，轮询抓取响应文本。
-        2. 支持超时、去重，若 response_selector 缺失则 fallback 到常见区域。
         3. 日志输出 selector 匹配数量，多个元素取最后一个。
         """
-        import asyncio, time
+        import time
         default_response_selectors = (
             '[data-testid="assistant-message"]',
             '[data-message] div',
@@ -289,16 +270,18 @@ class DefaultProviderAdapter(ProviderAdapter):
         last_change_time = time.monotonic()
         
         while (time.monotonic() - start) * 1000 < timeout_ms:
-            # Dynamically check for any visible selector in tried_selectors
+            # 1. 尝试动态抓取任何一个可见的选择器
             selector = await self._pick_visible_selector(page, tuple(tried_selectors))
+            
             if not selector:
                 if first_wait:
-                    first_sel = tried_selectors[0]
+                    # 优化点：使用逗号分隔的组合选择器，一次性等待“任意一个”出现
+                    combined_sel = ", ".join(tried_selectors)
                     try:
-                        logger.info(f"[wait_for_response] first wait_for_selector('{first_sel}') for async render...")
-                        await page.wait_for_selector(first_sel, timeout=3000)
+                        logger.info(f"[wait_for_response] 首次综合等待共 {len(tried_selectors)} 个选择器: {combined_sel}")
+                        await page.wait_for_selector(combined_sel, timeout=5000)
                     except Exception as exc:
-                        logger.info(f"[wait_for_response] wait_for_selector timeout or error: {exc}")
+                        logger.info(f"[wait_for_response] 综合等待超时或失败: {exc}")
                     first_wait = False
                 await asyncio.sleep(0.5)
                 continue
@@ -356,57 +339,3 @@ class DefaultProviderAdapter(ProviderAdapter):
         return last_text
 
 
-class ProviderAdapter_(ABC):
-    provider_name: str = "unknown"
-    input_selectors: tuple[str, ...] = ()
-    send_button_selectors: tuple[str, ...] = ()
-    response_selectors: tuple[str, ...] = ()
-
-    async def inspect_page_state(self, page: Any) -> dict:
-        """
-        通用 chat 页面状态检测：输入框可见即 chat_ready。
-        子类可扩展/覆盖。
-        返回 dict: {chat_ready, cookie_required, verification_required, login_required}
-        """
-        input_selector = await self._pick_visible_selector(page, self.input_selectors)
-        chat_ready = input_selector is not None
-        # 默认不检测 cookie/验证/登录弹窗，子类可扩展
-        return {
-            "chat_ready": chat_ready,
-            "cookie_required": False,
-            "verification_required": False,
-            "login_required": False,
-        }
-
-    @abstractmethod
-    async def is_logged_in(self, page: Any) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def send_message(self, page: Any, message: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def wait_for_response(
-        self,
-        page: Any,
-        previous_response: str | None = None,
-        timeout_ms: int = 60000,
-    ) -> Optional[str]:
-        raise NotImplementedError
-
-    async def _pick_visible_selector(self, page: Any, selectors: tuple[str, ...]) -> Optional[str]:
-        for selector in selectors:
-            locator = page.locator(selector).first
-            try:
-                if await locator.is_visible():
-                    return selector
-            except Exception:
-                continue
-        return None
-
-    @staticmethod
-    def normalize_text(value: str | None) -> str:
-        if not value:
-            return ""
-        return "\n".join(line.rstrip() for line in value.strip().splitlines()).strip()

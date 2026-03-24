@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 import re
+import logging
 from typing import Any
+
+from src.logging_mp import startlog
+
+logger = startlog(__name__)
 
 
 class ResponseExtractor:
@@ -53,10 +58,22 @@ class ResponseExtractor:
             return None
         fixed = fixed.replace("\u201c", '"').replace("\u201d", '"')
         fixed = fixed.replace("\u2018", "'").replace("\u2019", "'")
+        
+        # 启发式修复：LLM 经常在 CSS 选择器中写出未转义的双引号，例如 "has-text("New Chat")"
+        # 这种修复会将 :has-text("...") 转换为 :has-text('...') 或类似形式以满足 JSON 规范
+        try:
+            # 尝试修复 :has-text("...") 内部的双引号
+            fixed = re.sub(r'(:has-text\()\s*"([^"]*?)"\s*(\))', r"\1'\2'\3", fixed)
+            # 尝试修复 [attr="..."] 内部的双引号 (支持 =, *=, ^=, $=, ~=, |=, !=)
+            fixed = re.sub(r'(\[[^\]=^$~*|!]+[=~|^$*!]=?)\s*"([^"]*?)"\s*(\])', r"\1'\2'\3", fixed)
+        except Exception as e:
+            logger.warning(f"[_try_parse_json] heuristic repair failed: {e}")
+
         try:
             parsed = json.loads(fixed)
             if isinstance(parsed, dict):
                 return parsed
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[_try_parse_json] parse failed after repair. fixed_text={fixed!r} error={e}")
             return None
         return None

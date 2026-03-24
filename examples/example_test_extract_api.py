@@ -119,19 +119,23 @@ def _parse_args() -> argparse.Namespace:
 
 
 ret_json = '''{
-    "case_id": "IMM-####-##(from document)",
-    "case_type": "Mandamus|Other",
-    "case_status": "Closed|On-Going",
-    "judgment_result": "leave|grant|dismiss",
-    "hearing": "true|false",
+    "case_id": "IMM-1-24", // Docket number from the document (e.g. IMM-####-##)
+    "case_type": "Mandamus", // Options: Mandamus, Judicial Review, Other
+    "case_status": "Closed", // Options: Closed, On-Going
+    "judgment_result": "granted", // Options: granted, dismiss, leave_granted, leave_dismissed
+    "hearing": true, // boolean: Whether a personal appearance/hearing occurred
     "timeline": {
-        "filing_date": "YYYY-MM-DD",
-        "Applicant_file_completed": "YYYY-MM-DD",
-        "reply_memo": "YYYY-MM-DD",
-        "Sent_to_Court": "YYYY-MM-DD",
-        "judgment_date": "YYYY-MM-DD"
+        "filing_date": "2024-07-31", // Application filing date (YYYY-MM-DD)
+        "appearance_date": "2024-08-09", // Respondent (DOJ) files Notice of Appearance
+        "applicant_record": "2024-09-19", // Applicant files Application Record
+        "doj_record": "2024-10-11", // Respondent (DOJ) files Application Record/Memorandum
+        "reply_memo": "2024-10-21", // Applicant submits Reply Memorandum
+        "leave_grant_date": "2025-02-07", // Court grants leave for judicial review
+        "certified_record": "2025-02-26", // IRCC sends certified record (pursuant to Court order)
+        "hearing_date": "2025-05-01", // Date of the oral hearing (Zoom or personal appearance)
+        "judgment_date": "2025-05-01" // Final judgment/decision date
     }
-    }'''
+}'''
 
 document_text = '''
 {
@@ -180,7 +184,7 @@ document_text = '''
 }
         '''
 
-prompt_templ = f"Extract legal status, judgment result, and key timeline nodes as JSON. the JSON should have the format <ret_json_template>, and the json is the only result of the response no any other additional information. If any of the fields cannot be extracted, please set it to null or empty.\n the document text is:\n"
+prompt_templ = "Extract the specified legal status, judgment result, and key timeline nodes from the provided document. Return the result strictly as a single JSON object matching the following schema: <ret_json_template>. Deliver only the JSON with no additional commentary. Use null for fields that cannot be extracted."
 
     
 def main() -> None:
@@ -190,7 +194,7 @@ def main() -> None:
     # 客户端无需检查会话状态，直接发送请求
 
     # 连续多次请求
-    N = 4
+    N = 6
     results = []
      
     for i in range(N):
@@ -203,6 +207,7 @@ def main() -> None:
             document_text=document_text,
             msg_id_prefix=f"e2e-example"
         )
+        start_time = time.monotonic()
         created = client.post(
             "/api/tasks",
             json=request_payload,
@@ -215,6 +220,7 @@ def main() -> None:
         terminal_statuses = {"COMPLETED", "FAILED", "CRITICAL"}
         deadline = time.monotonic() + timeout_seconds
         final_row: dict[str, Any] | None = None
+        duration = 0.0
         while True:
             row = client.get(f"/api/tasks/{task_id}")
             pretty_print(
@@ -229,9 +235,11 @@ def main() -> None:
             if row["status"] == "CRITICAL":
                 print("[CRITICAL] 服务端已不可用，终止轮询。请检查服务端健康状态。")
                 final_row = row
+                duration = time.monotonic() - start_time
                 break
             if row["status"] in terminal_statuses:
                 final_row = row
+                duration = time.monotonic() - start_time
                 break
             if time.monotonic() >= deadline:
                 diagnostics = _collect_pending_diagnostics(client, task_id)
@@ -246,11 +254,12 @@ def main() -> None:
                 "run": i+1,
                 "provider": final_row.get("provider"),
                 "status": final_row.get("status"),
+                "duration": duration,
                 "error_message": final_row.get("error_message"),
             })
     print("\n===== 汇总结果 =====")
     for r in results:
-        print(f"Run {r['run']}: provider={r['provider']} status={r['status']} error={r['error_message']}")
+        print(f"Run {r['run']}: provider={r['provider']} status={r['status']} duration={r['duration']:.2f}s error={r['error_message']}")
     client.close()
 
 

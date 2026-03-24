@@ -270,6 +270,7 @@ async def _llm_extract_selectors(dom_phase_1: str, dom_phase_2: str, expected_fi
 - Use "" if not found.
 - For each field, provide the single most specific and reliable CSS selector.
 - Ensure selectors are specific for Playwright (CSS or Playwright pseudo-selectors).
+- IMPORTANT: Use SINGLE QUOTES (') for inner strings in selectors (e.g. :has-text('New Chat')), NOT unescaped double quotes.
 - MODERN APPS: The page may use Web Components and Shadow DOM (represented as <shadow-root> in the provided DOM). Selectors should target the deepest identifiable element.
 
 # Output JSON Template:
@@ -350,6 +351,16 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
     selectors = {}
     logger.info(f"[auto_extract_chat_selectors] provider={provider} session_id={session_id} page_url={getattr(page, 'url', None)} 开始提取 selector")
     
+    # 尝试处理 Cloudflare 验证
+    try:
+        from src.browser.session_pool import get_global_provider_session_pool
+        pool = get_global_provider_session_pool()
+        entry = pool._entries.get(provider)
+        if entry and entry.controller:
+            await entry.controller.handle_cloudflare_challenge(page, timeout_ms=8000)
+    except Exception as cf_exc:
+        logger.warning(f"[Cloudflare] 预检脚本执行异常: {cf_exc}")
+    
     # 启发式提取输入框和发送按钮
     input_candidates = [
         "textarea[placeholder='Message DeepSeek']", "textarea[data-testid='chat-input']",
@@ -378,25 +389,28 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
         () => {
             function isVisible(el) {
                 if (el.nodeType !== Node.ELEMENT_NODE) return true;
+                if (el === document.body) return true; // Body always visible for capture
                 if (!el.getBoundingClientRect) return true;
                 const style = window.getComputedStyle(el);
-                return style.display !== 'none' && style.visibility !== 'hidden' && (el.offsetWidth > 0 || el.tagName.includes('-'));
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                // 对于自定义组件或延迟加载，不强制要求 offsetWidth > 0
+                return true;
             }
 
             function cleanNode(node) {
                 if (node.nodeType === Node.ELEMENT_NODE) {
                     const tag = node.tagName.toLowerCase();
-                    const junkTags = ['script', 'style', 'svg', 'path', 'img', 'noscript', 'meta', 'link', 'iframe', 'canvas', 'video', 'audio'];
+                    const junkTags = ['script', 'style', 'svg', 'path', 'img', 'noscript', 'meta', 'link', 'iframe', 'canvas', 'video', 'audio', 'head'];
                     if (junkTags.includes(tag)) return null;
                     if (!isVisible(node) && !['input', 'textarea', 'button'].includes(tag)) return null;
 
                     const newNode = document.createElement(tag);
-                    const keepAttrs = ['id', 'class', 'placeholder', 'aria-label', 'data-testid', 'href', 'title', 'role', 'name'];
+                    const keepAttrs = ['id', 'class', 'placeholder', 'aria-label', 'data-testid', 'href', 'title', 'role', 'name', 'type'];
                     for (let i = 0; i < node.attributes.length; i++) {
                         const attr = node.attributes[i];
                         if (keepAttrs.includes(attr.name)) {
                             let val = attr.value;
-                            if (val.length > 40) val = val.substring(0, 40) + '...';
+                            if (val.length > 60) val = val.substring(0, 60) + '...';
                             newNode.setAttribute(attr.name, val);
                         }
                     }
@@ -405,17 +419,17 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
                     if (tag === 'textarea' || tag === 'input') {
                         let val = node.value || "";
                         if (val) {
-                            if (val.length > 50) val = val.substring(0, 50) + '...';
+                            if (val.length > 80) val = val.substring(0, 80) + '...';
                             newNode.setAttribute('value_content', val);
                         }
                     }
 
-                    let hasContent = false;
+                    let anyChild = false;
                     for (let i = 0; i < node.childNodes.length; i++) {
                         const cleaned = cleanNode(node.childNodes[i]);
                         if (cleaned) {
                             newNode.appendChild(cleaned);
-                            hasContent = true;
+                            anyChild = true;
                         }
                     }
                     
@@ -427,7 +441,7 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
                             if (cleaned) {
                                 shadowContainer.appendChild(cleaned);
                                 hasShadowContent = true;
-                                hasContent = true;
+                                anyChild = true;
                             }
                         }
                         if (hasShadowContent) newNode.appendChild(shadowContainer);
@@ -436,24 +450,23 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
                     const interactiveTags = ['input', 'textarea', 'button', 'a'];
                     const isContentEditable = node.hasAttribute('contenteditable') && node.getAttribute('contenteditable') !== 'false';
                     const isRoleButton = node.getAttribute('role') === 'button';
-                    const ariaLabel = (node.getAttribute('aria-label') || '').toLowerCase();
-                    const isPotentialSend = ariaLabel.includes('send') || ariaLabel.includes('发送');
+                    const hasText = node.innerText && node.innerText.trim().length > 0;
                     
-                    if (!hasContent && !interactiveTags.includes(tag) && !isContentEditable && !isRoleButton && !isPotentialSend && !node.innerText.trim()) {
+                    if (!anyChild && !interactiveTags.includes(tag) && !isContentEditable && !isRoleButton && !hasText) {
                         return null;
                     }
                     return newNode;
                 } else if (node.nodeType === Node.TEXT_NODE) {
                     const text = node.textContent.trim();
                     if (text.length > 0) {
-                        return document.createTextNode(text.length > 80 ? text.substring(0, 80) + '...' : text);
+                        return document.createTextNode(text.length > 100 ? text.substring(0, 100) + '...' : text);
                     }
                 }
                 return null;
             }
 
             const cleanedBody = cleanNode(document.body);
-            return cleanedBody ? cleanedBody.innerHTML : "<body></body>";
+            return cleanedBody ? cleanedBody.innerHTML : "<body>EMPTY BODY</body>";
         }
     """
 
@@ -612,6 +625,16 @@ class PooledProviderTaskProcessor:
                 decision.session_id,
                 getattr(decision, 'chat_url', None)
             )
+            # 1.5 尝试处理 Cloudflare (在执行 adapter 之前)
+            try:
+                from src.browser.session_pool import get_global_provider_session_pool
+                pool = get_global_provider_session_pool()
+                entry = pool._entries.get(decision.provider)
+                if entry and entry.controller:
+                    await entry.controller.handle_cloudflare_challenge(page, timeout_ms=5000)
+            except Exception as cf_exc:
+                logger.warning(f"[Cloudflare] 任务执行预检异常: {cf_exc}")
+                
             # 2. 调用 provider adapter 执行任务（如发送 prompt）
             # 假设 adapter.run 返回对象含 ok/raw_response/error_message 字段
             result = await self.adapter.run(page, decision)
@@ -694,27 +717,52 @@ class PooledProviderTaskProcessor:
                 # --- Auto-Reset Check ---
                 self.session_repo.increment_chat_rounds(task.session_id)
                 session_obj = self.session_repo.get(task.session_id)
+                
                 from src.storage.repositories import AppParamRepository
                 app_param = AppParamRepository().get()
                 max_rounds = app_param.max_chat_rounds
                 
                 if max_rounds > 0 and session_obj and session_obj.chat_rounds >= max_rounds:
-                    logger.info(f"[worker] session {task.session_id} 达到最大轮数 {max_rounds}，准备重置对话")
+                    logger.info(f"[worker] session {task.session_id} 达到最大轮数 {max_rounds}，准备重置对话话题")
                     try:
                         page = await get_or_create_provider_session(
                             decision.provider, decision.session_id, getattr(decision, 'chat_url', None)
                         )
                         from src.storage.repositories import ProviderConfigRepository
-                        import json
                         provider_row = ProviderConfigRepository().get(decision.provider)
-                        if provider_row and provider_row.ready_selectors_json:
-                            selectors = json.loads(provider_row.ready_selectors_json)
-                            if selectors.get("new_chat_selector"):
-                                await page.click(selectors["new_chat_selector"], timeout=5000)
-                                logger.info(f"[worker] 成功点击 'New chat' 按钮重置对话: {task.session_id}")
-                                await asyncio.sleep(2)  # 给页面一点响应和加载时间
+                        
+                        if provider_row and provider_row.new_chat_selector:
+                            sel = provider_row.new_chat_selector
+                            logger.info(f"[worker] 尝试点击 New Chat 按钮: {sel}")
+                            try:
+                                btn = page.locator(sel).first
+                                await btn.click(timeout=5000)
+                                await page.wait_for_timeout(1000)
+                                
+                                # 处理可能的确认对话框 (针对 Google AI Studio 等)
+                                for confirm_text in ["Discard and continue", "Confirm", "确定", "继续"]:
+                                    try:
+                                        # 使用正则或模糊匹配
+                                        confirm_btn = page.get_by_role("button", name=confirm_text, exact=False).first
+                                        if await confirm_btn.is_visible():
+                                            logger.info(f"[worker] 检测到确认按钮 '{confirm_text}'，点击确认重置")
+                                            await confirm_btn.click(timeout=3000)
+                                            await page.wait_for_timeout(1000)
+                                            break
+                                    except Exception: continue
+                                    
+                                await page.wait_for_timeout(1000)
+                                logger.info(f"[worker] 成功通过按钮重置对话话题: {task.session_id}")
+                            except Exception as click_err:
+                                logger.warning(f"[worker] 通过按钮重置对话失败: {click_err}，尝试导航到主页 {provider_row.url}")
+                                await page.goto(provider_row.url)
+                                await page.wait_for_timeout(3000)
+                        else:
+                            logger.info(f"[worker] Provider {decision.provider} 未配置 new_chat_selector，通过主页导航重置")
+                            await page.goto(provider_row.url)
+                            await page.wait_for_timeout(3000)
                     except Exception as reset_exc:
-                        logger.warning(f"[worker] 重置对话失败: {reset_exc}")
+                        logger.warning(f"[worker] 重置对话异常: {reset_exc}")
                     finally:
                         self.session_repo.reset_chat_rounds(task.session_id)
 

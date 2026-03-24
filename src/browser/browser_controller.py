@@ -2,7 +2,9 @@ from __future__ import annotations
 
  
 import os
+import asyncio
 from pathlib import Path
+from time import monotonic
 from typing import Literal, Optional
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
@@ -56,7 +58,18 @@ class BrowserController:
 
         launch_args = {
             "headless": effective_headless,
-            "args": ["--disable-blink-features=AutomationControlled"],
+            "channel": "chrome",
+            "ignore_default_args": ["--enable-automation"], # 去掉最明显的自动化标记
+            "args": [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-infobars",
+                "--window-size=1920,1080",
+                "--lang=zh-CN",
+                "--disable-site-isolation-trials", # 解决某些 iframe 跨域导致的检测问题
+                f"--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            ],
         }
 
         storage_state: str | None = None
@@ -81,7 +94,8 @@ class BrowserController:
                     )
                     self._persistent_context = True
                     self._browser = None
-                    logger.debug("browser.start completed persistent=%s", self._persistent_context)
+                    await self._apply_stealth_to_context(self._context)
+                    logger.debug("browser.start completed persistent=%s (with stealth)", self._persistent_context)
                     return
                 except Exception as exc:
                     error_text = str(exc)
@@ -119,8 +133,37 @@ class BrowserController:
         self._browser = await launch_fn.launch(**launch_args)
         self._persistent_context = False
 
-        self._context = await self._browser.new_context(storage_state=storage_state)
-        logger.debug("browser.start completed persistent=%s", self._persistent_context)
+        self._context = await self._browser.new_context(
+            storage_state=storage_state,
+            viewport={"width": 1920, "height": 1080}
+        )
+        await self._apply_stealth_to_context(self._context)
+        logger.debug("browser.start completed persistent=%s (with stealth)", self._persistent_context)
+    async def _apply_stealth_to_context(self, context: BrowserContext) -> None:
+        """注入 JS 脚本以屏蔽 webdriver 等自动化痕迹"""
+        stealth_js = """
+        () => {
+            // 屏蔽自动化标记
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            // 伪造 Chrome 特性
+            window.chrome = { runtime: {} };
+            // 伪造语言
+            Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+            // 伪造平台以匹配 User-Agent
+            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+            // 伪造硬件并发数
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+            // 修复 Permissions
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+            );
+        }
+        """
+        await context.add_init_script(stealth_js)
+
 
     async def save_storage_state(self, storage_state_path: str) -> None:
         if self._context is None:
@@ -158,6 +201,52 @@ class BrowserController:
                 logger.warning("browser.close playwright stop failed: %s", exc)
             self._playwright = None
         logger.debug("browser.close completed")
+
+    async def handle_cloudflare_challenge(self, page: Page, timeout_ms: int = 5000) -> bool:
+        """
+        尝试自动通过 Cloudflare Turnstile/Challenge 验证。
+        扫描 iframe 并寻找 checkbox。
+        """
+        start_time = monotonic()
+        while (monotonic() - start_time) * 1000 < timeout_ms:
+            # 1. 寻找 Cloudflare 常见的 selector
+            selectors = [
+                 "iframe[src*='cloudflare']",
+                 "#turnstile-wrapper iframe",
+                 "div#cf-turnstile-wrapper iframe",
+            ]
+            
+            for sel in selectors:
+                try:
+                    iframe_el = page.locator(sel).first
+                    if await iframe_el.is_visible():
+                        logger.info(f"[Cloudflare] 发现验证 iframe: {sel}，尝试点击中心...")
+                        # 尝试点击 iframe 中间位置（checkbox 通常在中间）
+                        box = await iframe_el.bounding_box()
+                        if box:
+                            await page.mouse.click(box['x'] + box['width']/2, box['y'] + box['height']/2)
+                            await asyncio.sleep(2)
+                            # 如果 iframe 消失了，说明可能成功了
+                            if not await iframe_el.is_visible():
+                                logger.info("[Cloudflare] Iframe 已消失，验证可能已通过")
+                                return True
+                except Exception as e:
+                    logger.debug(f"[Cloudflare] 尝试点击失败: {e}")
+            
+            # 2. 直接找 iframe 内部的 checkbox (如果同源或已注入脚本)
+            for frame in page.frames:
+                try:
+                    # Cloudflare 样式： <input type="checkbox">
+                    checkbox = frame.locator("input[type='checkbox']").first
+                    if await checkbox.is_visible():
+                        logger.info("[Cloudflare] 在 Iframe 中发现 checkbox，点击...")
+                        await checkbox.click()
+                        await asyncio.sleep(2)
+                        return True
+                except: pass
+            
+            await asyncio.sleep(1)
+        return False
 
     async def is_page_healthy(self, page: Page, required_selector: str | None = None) -> bool:
         if page.is_closed():
