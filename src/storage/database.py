@@ -40,7 +40,7 @@ class SessionORM(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
 
-    attempts: Mapped[list[TaskAttemptORM]] = relationship(back_populates="session")
+    attempts: Mapped[list[TaskAttemptORM]] = relationship(back_populates="session", cascade="all, delete-orphan")
     # 新增：与 TaskORM 的一对多关系
     tasks: Mapped[list[TaskORM]] = relationship("TaskORM", back_populates="session")
 
@@ -140,8 +140,8 @@ class TaskAttemptORM(Base):
     __tablename__ = "task_attempts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False)
-    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     attempt_no: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -159,7 +159,7 @@ class RawResponseORM(Base):
     __tablename__ = "raw_responses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
     provider: Mapped[str] = mapped_column(
         String(64), nullable=False
     )
@@ -175,7 +175,7 @@ class ExtractedResultORM(Base):
     __tablename__ = "extracted_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), nullable=False)
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
     case_status: Mapped[CaseStatus | None] = mapped_column(
         Enum(CaseStatus, native_enum=False), nullable=True
     )

@@ -69,6 +69,7 @@ const state = {
 	providers: [],
 	editingName: null,
 	toastTimer: null,
+	currentDomSample: "", // Track DOM sample for modal
 };
 
 const nodes = {
@@ -89,7 +90,9 @@ const nodes = {
 	inputSelector: document.getElementById("provider-input-selector"),
 	sendButtonSelector: document.getElementById("provider-send-button-selector"),
 	replySelector: document.getElementById("provider-reply-selector"),
-	domSample: document.getElementById("provider-dom-sample"),
+	viewDomBtn: document.getElementById("view-dom-btn"),
+	domModal: document.getElementById("dom-modal"),
+	domModalContent: document.getElementById("modal-dom-content"),
 	submit: document.getElementById("submit-btn"),
 	reset: document.getElementById("reset-btn"),
 	refresh: document.getElementById("refresh-btn"),
@@ -115,6 +118,22 @@ function showToast(message) {
 	}, 2200);
 }
 
+function openModal(id, content = "") {
+	const modal = document.getElementById(id);
+	if (!modal) return;
+	if (content && nodes.domModalContent) {
+		nodes.domModalContent.textContent = content;
+	}
+	modal.classList.add("show");
+}
+
+function closeModal(id) {
+	const modal = document.getElementById(id);
+	if (modal) modal.classList.remove("show");
+}
+
+window.closeModal = closeModal; // Make it global for onclick
+
 function resetForm() {
 	state.editingName = null;
 	nodes.editingName.value = "";
@@ -129,7 +148,7 @@ function resetForm() {
 	if (nodes.inputSelector) nodes.inputSelector.value = "";
 	if (nodes.sendButtonSelector) nodes.sendButtonSelector.value = "";
 	if (nodes.replySelector) nodes.replySelector.value = "";
-	if (nodes.domSample) nodes.domSample.value = "";
+	state.currentDomSample = "";
 	nodes.formTitle.textContent = "Create Provider";
 	nodes.submit.textContent = "Create";
 }
@@ -148,16 +167,21 @@ function fillForEdit(row) {
 	if (nodes.inputSelector) nodes.inputSelector.value = row.input_selector || "";
 	if (nodes.sendButtonSelector) nodes.sendButtonSelector.value = row.send_button_selector || "";
 	if (nodes.replySelector) nodes.replySelector.value = row.reply_selector || "";
-	if (nodes.domSample) nodes.domSample.value = row.dom_sample || "";
+	state.currentDomSample = row.dom_sample || "No DOM sample recorded yet.";
 	nodes.formTitle.textContent = `Edit Provider: ${row.name}`;
 	nodes.submit.textContent = "Update";
 }
 
 function renderRows() {
 	nodes.rows.innerHTML = "";
-	const rows = [...state.providers].sort((a, b) => a.name.localeCompare(b.name));
+	const rows = [...state.providers].sort((a, b) => {
+		// Locked providers first
+		if (a.lock !== b.lock) return a.lock ? -1 : 1;
+		return a.name.localeCompare(b.name);
+	});
 	for (const row of rows) {
 		const tr = document.createElement("tr");
+		if (row.lock) tr.classList.add("row-locked");
 		const deleteAction = (row.builtin || row.lock)
 			? ""
 			: `<button type="button" class="btn btn-danger" data-action="delete" data-name="${row.name}">Delete</button>`;
@@ -193,6 +217,15 @@ function renderRows() {
 async function reload() {
 	state.providers = await api.listProviders();
 	renderRows();
+
+	// Sync active form if editing
+	const editingNameValue = nodes.editingName.value;
+	if (editingNameValue) {
+		const updatedRow = state.providers.find(p => p.name === editingNameValue);
+		if (updatedRow) {
+			fillForEdit(updatedRow);
+		}
+	}
 }
 
 function readPayload() {
@@ -351,6 +384,12 @@ async function init() {
 	nodes.rows.addEventListener("click", (event) => {
 		handleAction(event).catch((err) => showToast(err.message));
 	});
+
+	if (nodes.viewDomBtn) {
+		nodes.viewDomBtn.addEventListener("click", () => {
+			openModal("dom-modal", state.currentDomSample);
+		});
+	}
 
 	resetForm();
 	await loadDispatchMode();

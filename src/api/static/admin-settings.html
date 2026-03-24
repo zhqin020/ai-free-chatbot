@@ -61,7 +61,6 @@
 					<div class="panel-head">
 						<h2 id="form-title">Create Provider</h2>
 						<div class="actions">
-							<button id="refresh-btn" type="button" class="btn btn-secondary">Refresh</button>
 						</div>
 					</div>
 					<form id="provider-form" class="form-grid">
@@ -116,13 +115,16 @@
 							Reply Selector
 							<input id="provider-reply-selector" placeholder=".message.assistant" />
 						</label>
-						<label class="span-3">
-							DOM Sample (Read-only)
-							<textarea id="provider-dom-sample" readonly rows="3" placeholder="LLM 识别出的 DOM 样本将显示在这里"></textarea>
-						</label>
+						<div class="span-3">
+							<label style="flex-direction: row; align-items: center; gap: 12px;">
+								DOM Sample (LLM Analysis Source)
+								<button id="view-dom-btn" type="button" class="btn btn-secondary btn-sm" style="padding: 4px 8px; font-size: 12px;">View Sample</button>
+							</label>
+						</div>
 						<div class="actions span-3">
 							<button id="submit-btn" type="submit" class="btn btn-primary">Create</button>
 							<button id="reset-btn" type="button" class="btn btn-ghost">Reset</button>
+							<button id="refresh-btn" type="button" class="btn btn-secondary">Refresh</button>
 						</div>
 					</form>
 				</section>
@@ -151,6 +153,22 @@
 				</section>
 
 				<div id="toast" role="status" aria-live="polite"></div>
+
+				<!-- DOM Sample Modal -->
+				<div id="dom-modal" class="modal-overlay">
+					<div class="modal-container">
+						<div class="modal-header">
+							<h2>DOM Sample View</h2>
+							<button type="button" class="btn btn-ghost" onclick="closeModal('dom-modal')">×</button>
+						</div>
+						<div class="modal-body">
+							<pre id="modal-dom-content"></pre>
+						</div>
+						<div class="modal-footer">
+							<button type="button" class="btn btn-secondary" onclick="closeModal('dom-modal')">Close</button>
+						</div>
+					</div>
+				</div>
 			</main>
 		</div>
 	</div>

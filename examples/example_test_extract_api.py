@@ -190,7 +190,7 @@ def main() -> None:
     # 客户端无需检查会话状态，直接发送请求
 
     # 连续多次请求
-    N = 6
+    N = 4
     results = []
      
     for i in range(N):

@@ -10,9 +10,8 @@ body {
 }
 
 .page {
-	max-width: 1200px;
-	margin: 0 auto;
-	padding: 20px;
+	width: 100%;
+	padding: 0;
 	display: grid;
 	gap: 16px;
 }
@@ -183,8 +182,16 @@ th,
 td {
 	border-bottom: 1px solid #edf2f7;
 	text-align: left;
-	padding: 10px;
-	vertical-align: top;
+	padding: 12px 10px;
+	vertical-align: middle;
+}
+
+tr.row-locked {
+	background-color: #fff9db !important; /* Light yellow for highlighting */
+}
+
+tr.row-locked td:first-child {
+	border-left: 4px solid #fcc419;
 }
 
 .muted {
@@ -226,4 +233,70 @@ td {
 	.topbar {
 		flex-direction: column;
 	}
+}
+
+/* Modal Styles */
+.modal-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(0, 0, 0, 0.5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.2s;
+}
+
+.modal-overlay.show {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.modal-container {
+	background: #fff;
+	width: 90%;
+	max-width: 1000px;
+	max-height: 80vh;
+	border-radius: 12px;
+	display: flex;
+	flex-direction: column;
+	box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+	padding: 16px;
+	border-bottom: 1px solid #e2e8f0;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.modal-body {
+	padding: 16px;
+	overflow: auto;
+	flex: 1;
+}
+
+.modal-body pre {
+	margin: 0;
+	white-space: pre-wrap;
+	word-break: break-all;
+	font-family: monospace;
+	font-size: 13px;
+	background: #f8fafc;
+	padding: 12px;
+	border-radius: 8px;
+	border: 1px solid #e2e8f0;
+}
+
+.modal-footer {
+	padding: 12px 16px;
+	border-top: 1px solid #e2e8f0;
+	display: flex;
+	justify-content: flex-end;
 }

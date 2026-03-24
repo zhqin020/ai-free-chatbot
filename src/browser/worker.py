@@ -93,11 +93,15 @@ def start_worker_thread(provider: str, logger=None) -> '__import__("threading").
                 if logger:
                     logger.info(f"[worker] provider {provider} 收到中止指令，退出后台循环。")
             finally:
+                if logger:
+                    logger.info(f"[worker] provider {provider} 进入清理流程 (finally)...")
                 try:
                     await pool.close_provider_session(provider)
+                    if logger:
+                        logger.info(f"[worker] provider {provider} 成功清理 session 资源。")
                 except Exception as exc:
                     if logger:
-                        logger.error(f"[worker] provider {provider} 清理 session 异常: {exc}")
+                        logger.error(f"[worker] provider {provider} 清理 session 异常: {exc}", exc_info=True)
         loop.run_until_complete(run())
 
     t = threading.Thread(target=worker_thread, name=f"WorkerThread-{provider}", daemon=True)
@@ -203,7 +207,7 @@ def get_command_result(command_id: str, timeout: float = 10.0) -> Optional[Worke
 
 
 
-async def _llm_extract_selectors(dom: str, expected_selectors: list[str], current_provider: str, logger=None) -> dict:
+async def _llm_extract_selectors(dom_phase_1: str, dom_phase_2: str, expected_fields: list, current_provider: str, logger=None) -> dict:
     from src.storage.repositories import TaskRepository
     from src.models.task import TaskCreate, TaskStatus
     from src.parser.response_extractor import ResponseExtractor
@@ -214,31 +218,59 @@ async def _llm_extract_selectors(dom: str, expected_selectors: list[str], curren
     task_repo = TaskRepository()
     pool = get_global_provider_session_pool()
     
-    # 查找除当前 provider 外第一个 READY 的作为“内置助手”
-    ready_entry = None
-    for p_name, entry in pool._entries.items():
-        if p_name != current_provider and entry and not getattr(entry.page, "is_closed", lambda: True)():
-            ready_entry = entry
-            break
+    # 获取当前 READY 状态的 provider entry，优先选择 locked=true 的其他 provider
+    available_entries = []
+    for e in pool._entries.values():
+        if e.provider == current_provider:
+            continue
+        try:
+            if not e.page.is_closed():
+                available_entries.append(e)
+        except Exception:
+            continue
     
+    # 优先选取 locked 的 provider
+    ready_entry = next((e for e in available_entries if e.lock), None)
+    if not ready_entry:
+        # 其次选择任意 READY 的
+        ready_entry = next(iter(available_entries), None)
+        
+    if not ready_entry:
+        # 严格按照需求 4：如果没有其他的locked provider，可由自己所在的线程识别。
+        self_entry = pool._entries.get(current_provider)
+        if self_entry:
+            try:
+                if not self_entry.page.is_closed():
+                    ready_entry = self_entry
+                    if logger:
+                        logger.info(f"[_llm_extract_selectors] No other READY helper found. Using self ({current_provider}) for extraction.")
+            except Exception:
+                pass
+
     if not ready_entry:
         if logger:
-            logger.warning(f"[_llm_extract_selectors] No other READY provider found to help extraction for {current_provider}")
+            logger.warning(f"[_llm_extract_selectors] No READY provider found to help extraction for {current_provider}")
         return {}
 
     prompt = f"""# Role: AI Chat Scraper Expert
-# Task: Identify CSS selectors for robot automation in the provided DOM.
+# Task: Identify CSS selectors using two DOM snapshots from different states.
+
+# State Description:
+- Phase 1: Captured AFTER typing "hello" into the input. Use this to find the input box and send button.
+- Phase 2: Captured AFTER clicking send/pressing enter. Use this to find the reply container (where "hello" response appears).
+
 # Target Elements:
 1. 'new_chat_selector': Button/link to start a new chat.
 2. 'input_selector': Text field or contenteditable div for typing messages.
 3. 'send_button_selector': The submit/send button.
-4. 'reply_selector': The container for the AI assistant's responses (e.g. '.ds-markdown', '.assistant-message').
+4. 'reply_selector': The container for the AI assistant's responses (e.g. '.ds-markdown', 'model-response .response-container-content').
 
-# Constraints:
-- Return ONLY a valid JSON object. 
-- No markdown formatting. 
+# Output Requirements:
+- Return ONLY valid JSON.
 - Use "" if not found.
-- Ensure selectors are specific for Playwright.
+- For each field, provide the single most specific and reliable CSS selector.
+- Ensure selectors are specific for Playwright (CSS or Playwright pseudo-selectors).
+- MODERN APPS: The page may use Web Components and Shadow DOM (represented as <shadow-root> in the provided DOM). Selectors should target the deepest identifiable element.
 
 # Output JSON Template:
 {{
@@ -248,14 +280,18 @@ async def _llm_extract_selectors(dom: str, expected_selectors: list[str], curren
   "reply_selector": ""
 }}
 
-# Minimized DOM Content:
-{dom}"""
+# DOM Phase 1:
+{dom_phase_1}
+
+# DOM Phase 2:
+{dom_phase_2}
+"""
 
     # 创建内部任务
     try:
         payload = TaskCreate(
             prompt=prompt,
-            document_text="INTERNAL_DOM_ANALYSIS",
+            document_text="INTERNAL_DOM_ANALYSIS_DUAL_PHASE",
             owner=str(ready_entry.thread_id),
             session_id=ready_entry.session_id,
             provider=ready_entry.provider
@@ -263,7 +299,7 @@ async def _llm_extract_selectors(dom: str, expected_selectors: list[str], curren
         task_row = task_repo.create(payload)
         task_id = task_row.id
         if logger:
-            logger.info(f"[_llm_extract_selectors] Created internal task {task_id} assigned to {ready_entry.provider} (thread {ready_entry.thread_id})")
+            logger.info(f"[_llm_extract_selectors] Created internal dual-phase task {task_id} assigned to {ready_entry.provider}")
         
         # 轮询状态
         timeout = 60
@@ -331,77 +367,193 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
 
     send_candidates = [
         "button[data-testid='send-button']", "button[aria-label*='send' i]",
-        "button:has-text('Send')", "button:has-text('发送')", "button[type='submit']",
-        "div[role='button'].ds-icon-button", "div.ds-icon-button[role='button']", "div[role='button']"
+        "button[aria-label*='发送' i]", "button:has-text('Send')", "button:has-text('发送')", 
+        "button[type='submit']", "div[role='button'].ds-icon-button", 
+        "div.ds-icon-button[role='button']", "div[role='button']"
     ]
     send_sel = None
+
+    # 获取 DOM 精简样本脚本
+    dom_script = """
+        () => {
+            function isVisible(el) {
+                if (el.nodeType !== Node.ELEMENT_NODE) return true;
+                if (!el.getBoundingClientRect) return true;
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none' && style.visibility !== 'hidden' && (el.offsetWidth > 0 || el.tagName.includes('-'));
+            }
+
+            function cleanNode(node) {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                    const tag = node.tagName.toLowerCase();
+                    const junkTags = ['script', 'style', 'svg', 'path', 'img', 'noscript', 'meta', 'link', 'iframe', 'canvas', 'video', 'audio'];
+                    if (junkTags.includes(tag)) return null;
+                    if (!isVisible(node) && !['input', 'textarea', 'button'].includes(tag)) return null;
+
+                    const newNode = document.createElement(tag);
+                    const keepAttrs = ['id', 'class', 'placeholder', 'aria-label', 'data-testid', 'href', 'title', 'role', 'name'];
+                    for (let i = 0; i < node.attributes.length; i++) {
+                        const attr = node.attributes[i];
+                        if (keepAttrs.includes(attr.name)) {
+                            let val = attr.value;
+                            if (val.length > 40) val = val.substring(0, 40) + '...';
+                            newNode.setAttribute(attr.name, val);
+                        }
+                    }
+                    
+                    // Special handling for input/textarea values
+                    if (tag === 'textarea' || tag === 'input') {
+                        let val = node.value || "";
+                        if (val) {
+                            if (val.length > 50) val = val.substring(0, 50) + '...';
+                            newNode.setAttribute('value_content', val);
+                        }
+                    }
+
+                    let hasContent = false;
+                    for (let i = 0; i < node.childNodes.length; i++) {
+                        const cleaned = cleanNode(node.childNodes[i]);
+                        if (cleaned) {
+                            newNode.appendChild(cleaned);
+                            hasContent = true;
+                        }
+                    }
+                    
+                    if (node.shadowRoot) {
+                        const shadowContainer = document.createElement('shadow-root');
+                        let hasShadowContent = false;
+                        for (let i = 0; i < node.shadowRoot.childNodes.length; i++) {
+                            const cleaned = cleanNode(node.shadowRoot.childNodes[i]);
+                            if (cleaned) {
+                                shadowContainer.appendChild(cleaned);
+                                hasShadowContent = true;
+                                hasContent = true;
+                            }
+                        }
+                        if (hasShadowContent) newNode.appendChild(shadowContainer);
+                    }
+
+                    const interactiveTags = ['input', 'textarea', 'button', 'a'];
+                    const isContentEditable = node.hasAttribute('contenteditable') && node.getAttribute('contenteditable') !== 'false';
+                    const isRoleButton = node.getAttribute('role') === 'button';
+                    const ariaLabel = (node.getAttribute('aria-label') || '').toLowerCase();
+                    const isPotentialSend = ariaLabel.includes('send') || ariaLabel.includes('发送');
+                    
+                    if (!hasContent && !interactiveTags.includes(tag) && !isContentEditable && !isRoleButton && !isPotentialSend && !node.innerText.trim()) {
+                        return null;
+                    }
+                    return newNode;
+                } else if (node.nodeType === Node.TEXT_NODE) {
+                    const text = node.textContent.trim();
+                    if (text.length > 0) {
+                        return document.createTextNode(text.length > 80 ? text.substring(0, 80) + '...' : text);
+                    }
+                }
+                return null;
+            }
+
+            const cleanedBody = cleanNode(document.body);
+            return cleanedBody ? cleanedBody.innerHTML : "<body></body>";
+        }
+    """
+
+    async def capture_minified_dom():
+        try:
+            res = await page.evaluate(dom_script)
+            # 限制单次 DOM 长度，防止 token 溢出 (约 35k chars)
+            if res and len(res) > 35000:
+                return res[:35000] + "...(truncated)"
+            return res
+        except Exception as e:
+            logger.warning(f"[auto_extract_chat_selectors] DOM capture failed: {e}")
+            return ""
+
+    dom_phase_1 = ""
+    dom_phase_2 = ""
 
     if input_sel:
         selectors["input_selector"] = input_sel
         try:
             # 输入 hello
-            await page.locator(input_sel).first.fill("hello")
-            await page.wait_for_timeout(500)
+            await page.locator(input_sel).first.click()
+            await page.locator(input_sel).first.type("hello", delay=50)
+            await page.wait_for_timeout(2000) # 等待 UI 响应（如发送按钮出现）
             
-            # 再找发送按钮
-            for sel in send_candidates:
-                if await page.locator(sel).first.is_visible():
-                    send_sel = sel
-                    break
+            # 捕获阶段 1：打字后，发送前
+            dom_phase_1 = await capture_minified_dom()
             
-            if send_sel:
-                selectors["send_button_selector"] = send_sel
-                await page.locator(send_sel).first.click()
-                logger.info("[auto_extract_chat_selectors] 发送了 'hello' 测试消息，等待响应加载...")
-                await page.wait_for_timeout(5000) # 等待渲染回复
+            if send_sel or (send_candidates and len(send_candidates) > 0):
+                # 重新寻找最新的发送按钮
+                found_send = None
+                for sel in send_candidates:
+                    try:
+                        if await page.locator(sel).first.is_visible():
+                            found_send = sel
+                            break
+                    except Exception:
+                        continue
+                
+                if found_send:
+                    selectors["send_button_selector"] = found_send
+                    logger.info(f"[auto_extract_chat_selectors] Clicking send button: {found_send}")
+                    try:
+                        await page.locator(found_send).first.click()
+                        await page.wait_for_timeout(1000)
+                    except Exception as e:
+                        logger.warning(f"[auto_extract_chat_selectors] Click send button failed: {e}")
+                    
+                # 检查输入框是否清空，若未清空则兜底回车
+                try:
+                    curr_val = await page.locator(input_sel).first.evaluate("el => el.value || el.innerText")
+                    if curr_val.strip():
+                        logger.info("[auto_extract_chat_selectors] Input not cleared, trying Enter/Ctrl+Enter...")
+                        await page.locator(input_sel).first.focus()
+                        await page.keyboard.press("Control+Enter")
+                        await page.wait_for_timeout(500)
+                        await page.keyboard.press("Enter")
+                except Exception:
+                    pass
             else:
-                # 尝试 Enter 键发送
-                await page.locator(input_sel).first.press("Enter")
-                logger.info("[auto_extract_chat_selectors] 回车发送了 'hello' 测试消息...")
-                await page.wait_for_timeout(5000)
+                # 只有输入框，直接回车
+                logger.info("[auto_extract_chat_selectors] No send button found, trying Enter...")
+                try:
+                    await page.locator(input_sel).first.focus()
+                    await page.keyboard.press("Enter")
+                except Exception:
+                    pass
+            
+            logger.info("[auto_extract_chat_selectors] 等待响应加载 (5s)...")
+            await page.wait_for_timeout(5000)
+            
+            # 捕获阶段 2：发送后，应包含回复
+            dom_phase_2 = await capture_minified_dom()
+            
         except Exception as e:
             logger.warning(f"[auto_extract_chat_selectors] 向页面发送 hello 失败: {e}")
+            if not dom_phase_1:
+                dom_phase_1 = await capture_minified_dom()
+    else:
+        # 如果没找到输入框，直接抓取一次当前 DOM
+        dom_phase_1 = await capture_minified_dom()
 
-    # 获取 DOM 精简样本保存
-    dom_script = """
-        () => {
-            const clone = document.body.cloneNode(true);
-            const removeTags = ['script', 'style', 'svg', 'path', 'img', 'noscript', 'meta', 'link', 'iframe'];
-            clone.querySelectorAll(removeTags.join(',')).forEach(e => e.remove());
-            // Remove huge attributes
-            clone.querySelectorAll('*').forEach(e => {
-                if(e.hasAttribute('class') && e.getAttribute('class').length > 50) e.removeAttribute('class');
-            });
-            return clone.innerHTML;
-        }
-    """
-    dom_sample = ""
-    try:
-        dom_sample = await page.evaluate(dom_script)
-        # limit length
-        if len(dom_sample) > 30000:
-            dom_sample = dom_sample[:30000] + "...(truncated)"
-    except Exception as e:
-        logger.warning(f"Failed to extract DOM: {e}")
-    
-    selectors["dom_sample"] = dom_sample
+    # 将合并后的 DOM 样本存入结果（仅用于展示在 Admin UI）
+    selectors["dom_sample"] = f"--- PHASE 1 (Typed) ---\n{dom_phase_1}\n\n--- PHASE 2 (Replied) ---\n{dom_phase_2}"
 
     # 调用 LLM 进一步提取
-    expected = ["new_chat_selector", "input_selector", "send_button_selector", "reply_selector"]
-    if dom_sample:
-        llm_selectors = await _llm_extract_selectors(dom_sample, expected, provider, logger)
+    if dom_phase_1 or dom_phase_2:
+        llm_selectors = await _llm_extract_selectors(dom_phase_1, dom_phase_2, ["new_chat_selector", "input_selector", "send_button_selector", "reply_selector"], provider, logger)
         if llm_selectors:
-            for k in expected:
+            for k in ["new_chat_selector", "input_selector", "send_button_selector", "reply_selector"]:
                 if llm_selectors.get(k):
                     selectors[k] = llm_selectors[k]
                     
-    # 如果启发式优先，或者 LLM 未返回：
-    if input_sel and "input_selector" not in selectors:
+    # 如果 LLM 未返回 input/send，保留启发式结果
+    if input_sel and not selectors.get("input_selector"):
         selectors["input_selector"] = input_sel
-    if send_sel and "send_button_selector" not in selectors:
+    if send_sel and not selectors.get("send_button_selector"):
         selectors["send_button_selector"] = send_sel
     
-    # 最后兜底 reply area 的启发式
+    # 最后兜底 reply area 的启发式（如果 LLM 失败）
     if not selectors.get("reply_selector"):
         reply_candidates = [
             ".ds-message:last-of-type .ds-markdown", "div.message.assistant",
@@ -410,7 +562,7 @@ async def auto_extract_chat_selectors(provider: str, session_id: str, session_po
         ]
         for sel in reply_candidates:
             try:
-                if await page.locator(sel).first.is_visible():
+                if await page.locator(sel).first.count() > 0:
                     selectors["reply_selector"] = sel
                     break
             except Exception: pass
@@ -508,6 +660,8 @@ class PooledProviderTaskProcessor:
             if cmd:
                 await self._handle_command(cmd)
                 return True
+        except StopWorkerException:
+            raise
         except Exception as exc:
             logger.error(f"Command handling failed in {self.provider}: {exc}")
 

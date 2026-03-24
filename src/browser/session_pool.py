@@ -37,6 +37,7 @@ class _PoolEntry:
     thread_id: int  # 创建时线程ID
     session_id: str
     provider: str
+    lock: bool = False # 是否为锁定状态
 
 
 class ProviderSessionPool:
@@ -162,6 +163,7 @@ class ProviderSessionPool:
                 thread_id=threading.get_ident(),
                 session_id=session_id,
                 provider=provider,
+                lock=provider_row.lock if provider_row else False,
             )
             logger.info(f"[trace] AFTER register: pid={os.getpid()} thread_id={threading.get_ident()} pool._entries.keys={list(self._entries.keys())}")
             logger.info("pool.get_page created key=%s opened_url=%s", key, page.url)
@@ -199,9 +201,9 @@ class ProviderSessionPool:
     async def _close_entry(self, key: str) -> None:
         entry = self._entries.pop(key, None)
         if entry is None:
-            logger.debug("pool.close_entry skip missing key=%s", key)
+            logger.warning("pool.close_entry skip: entry already missing or key mismatch key=%s", key)
             return
-        logger.info("pool.close_entry begin key=%s", key)
+        logger.info("pool.close_entry begin key=%s session_id=%s thread_id=%s", key, entry.session_id, entry.thread_id)
         try:
             provider = entry.provider
             session_id = entry.session_id
@@ -211,10 +213,12 @@ class ProviderSessionPool:
         except Exception as exc:
             logger.warning("pool.close_entry save state failed key=%s error=%s", key, exc)
         try:
+            logger.debug("pool.close_entry calling controller.close() key=%s", key)
             await entry.controller.close()
+            logger.info("pool.close_entry controller closed key=%s", key)
         except Exception as exc:
-            logger.warning("pool.close_entry controller close failed key=%s error=%s", key, exc)
-        logger.info("pool.close_entry completed key=%s", key)
+            logger.error("pool.close_entry controller close failed key=%s error=%s", key, exc, exc_info=True)
+        logger.info("pool.close_entry completed ALL for key=%s", key)
 
 
 
@@ -262,7 +266,15 @@ async def get_or_create_provider_session(provider: str, session_id: str, url: st
         logger.info("pool.get_or_create_provider_session clearing cookies because need_login=False key=%s", key)
         await controller.context.clear_cookies()
     page = await controller.open_page(url)
-    pool._entries[key] = _PoolEntry(controller=controller, page=page, url=url, thread_id=current_thread, session_id=session_id, provider=provider)
+    pool._entries[key] = _PoolEntry(
+        controller=controller,
+        page=page,
+        url=url,
+        thread_id=current_thread,
+        session_id=session_id,
+        provider=provider,
+        lock=provider_row.lock if provider_row else False,
+    )
     return page
 
 

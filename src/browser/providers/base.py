@@ -119,37 +119,42 @@ class DefaultProviderAdapter(ProviderAdapter):
     def _load_selectors_from_provider(self):
         repo = ProviderConfigRepository()
         row = repo.get(self.provider_name)
-        # 默认 input_selector（可根据实际平台补充更多）
+        
+        # 默认 input_selector（空值兜底）
         default_input_selectors = (
             "textarea, input[type='text'], [contenteditable='true']",
         )
-        if row and row.ready_selectors_json:
-            try:
-                data = json.loads(row.ready_selectors_json)
-                # 合并 input_selector 和 input_selector_candidates，去重且保持顺序
-                selectors = []
-                if data.get("input_selector"):
-                    selectors.append(data["input_selector"])
-                if data.get("input_selector_candidates"):
-                    for s in data["input_selector_candidates"]:
-                        if s not in selectors:
-                            selectors.append(s)
-                if selectors:
-                    self.input_selectors = tuple(selectors)
-                else:
-                    self.input_selectors = default_input_selectors
-                self.send_button_selectors = (data.get("send_button_selector"),) if data.get("send_button_selector") else ()
-                # 优先 response_selector，其次 reply_selector
-                resp_sel = data.get("response_selector") or data.get("reply_selector")
-                self.response_selectors = (resp_sel,) if resp_sel else ()
-            except Exception:
-                self.input_selectors = default_input_selectors
-                self.send_button_selectors = ()
-                self.response_selectors = ()
-        else:
+        
+        if not row:
             self.input_selectors = default_input_selectors
             self.send_button_selectors = ()
             self.response_selectors = ()
+            return
+
+        # 1. 优先从独立字段加载
+        input_sel = row.input_selector
+        send_sel = row.send_button_selector
+        reply_sel = row.reply_selector
+        
+        # 2. 如果独立字段为空，尝试从 legacy JSON 字段兜底
+        if not (input_sel or send_sel or reply_sel) and row.ready_selectors_json:
+            try:
+                data = json.loads(row.ready_selectors_json)
+                input_sel = data.get("input_selector")
+                send_sel = data.get("send_button_selector")
+                reply_sel = data.get("response_selector") or data.get("reply_selector")
+            except Exception:
+                pass
+
+        # 3. 设置实例属性
+        self.input_selectors = (input_sel,) if input_sel else default_input_selectors
+        self.send_button_selectors = (send_sel,) if send_sel else ()
+        self.response_selectors = (reply_sel,) if reply_sel else ()
+        
+        # 记录日志方便调试
+        logger.debug(f"[_load_selectors_from_provider] {self.provider_name} loaded: "
+                     f"input={self.input_selectors}, send={self.send_button_selectors}, "
+                     f"response={self.response_selectors}")
 
     async def is_logged_in(self, page: Any) -> bool:
         # 默认实现：假定已登录，或需自定义
@@ -192,7 +197,11 @@ class DefaultProviderAdapter(ProviderAdapter):
                 import asyncio
                 await asyncio.sleep(0.5)
                 # 检查输入框是否已清空，未清空则兜底回车
-                value = await input_box.input_value()
+                try:
+                    value = await input_box.input_value()
+                except Exception:
+                    value = await input_box.inner_text()
+                    
                 if value.strip() != "":
                     logger.warning(f"[send_message] input_box not cleared after click, fallback to Enter")
                     try:
