@@ -13,48 +13,39 @@
 
 1. 最简任务链路说明：[docs/task-state-machine.md](docs/task-state-machine.md)
 
-## 快速开始
+## 快速开始 (Quick Start)
 
-1. 激活环境
+### 方案 A：使用 Docker (推荐，一键全环境)
 
+```bash
+# 请确保已安装 Docker 和 Docker Compose
+cp .env.example .env     # 编辑 .env 设置 API_TOKEN
+docker-compose up -d --build
+```
+访问：[http://localhost:8000/admin/sessions](http://localhost:8000/admin/sessions)
+
+### 方案 B：本地 Conda 开发环境
+
+#### 1. 系统依赖 (WSL 专用)
+如果您在 WSL 下运行，需安装 Chrome 和系统字体以支持管理页面自动打开：
+```bash
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install -y ./google-chrome-stable_current_amd64.deb
+sudo apt install -y fonts-noto-color-emoji fonts-noto-core fonts-symbola xdg-utils
+```
+
+#### 2. 环境初始化
+```bash
+conda env create -f environment.yml
 conda activate aifree
+playwright install --with-deps chromium
+cp .env.example .env
+```
 
-2. 安装依赖
-
-pip install -r requirements.txt
-
-安装 Playwright 浏览器内核（必须）：
-
-playwright install chromium
-
-若在 WSL/Ubuntu 环境运行管理页面，建议安装 emoji 字体（避免 Provider Settings 的图标显示为方块）：
-
-sudo apt update
-sudo apt install -y fonts-noto-color-emoji fonts-noto-core fonts-symbola
-fc-cache -f -v
-
-安装后建议重启 WSL 图形会话：
-
-1. 关闭浏览器。
-2. 在 Windows PowerShell 执行 `wsl --shutdown`。
-3. 重新进入 WSL 并启动服务后，浏览器强制刷新页面（Ctrl+Shift+R）。
-
-3. 设置环境变量（开发环境示例）
-
-export APP_NAME=ai-free-chatbot
-export APP_ENV=dev
-export LOG_LEVEL=INFO
-export DB_URL=sqlite:///data/app.db
-export API_TOKEN=
-export WORKER_HEADLESS=1
-
-4. 初始化数据库
-
-python -m scripts.init_db
-
-5. 一键协同启动 API + worker（推荐）
-
-python -m scripts.run_stack
+#### 3. 一键协同启动 (API + Worker)
+```bash
+python -m scripts.run_stack --open-admin-browser
+```
 
 默认会先做启动自检：
 
@@ -102,47 +93,33 @@ python -m scripts.run_stack --open-admin-browser --open-admin-browser-no-keyring
 
 API：
 
-uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+#### 3. 启动服务 (API + 内部 Worker)
+```bash
+python3 -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+```
+*注：启动 API 后，后台会自动启动任务 Worker 线程。*
 
-Worker：
+---
 
-python -m scripts.run_worker
+## 核心特性
+1.  **自动化会话管理**：支持主流 AI 平台 (Gemini, DeepSeek, Chaton, Merlin) 的登录维护。
+2.  **结构化数据提取**：针对法律文档优化的 LLM 选择器提取与验证链路。
+3.  **单进程统一模型**：无需单独启动 Worker，API 内部集成多进程/线程调度。
+4.  **可视化管理**：提供 Session 管理与任务测试的管理后台。
 
-Worker 调试模式（只跑固定轮询次数）：
-
-python -m scripts.run_worker --max-loops 10
-
-
-7. 访问入口
-
-1. 健康检查：http://127.0.0.1:8000/healthz
-2. API 文档：http://127.0.0.1:8000/docs
-3. 会话管理页：http://127.0.0.1:8000/admin/sessions
-4. 测试提取页：http://127.0.0.1:8000/admin/test-extract
-
-## 配置说明
-
-应用配置来自环境变量，定义见 [src/config.py](src/config.py)。
-
-1. APP_NAME：应用名称，默认 ai-free-chatbot。
-2. APP_ENV：运行环境，默认 dev。
-3. LOG_LEVEL：日志级别，默认 INFO。
-4. DB_URL：数据库连接，默认 sqlite:///data/app.db。
-5. API_TOKEN：预留鉴权字段，默认空。
-6. WORKER_HEADLESS：Worker 浏览器是否无头，1 为启用（默认），0 为关闭。
+---
 
 ## 常用命令
 
-1. 初始化数据库：python -m scripts.init_db
-2. 协同启动 API+Worker：python -m scripts.run_stack
-3. 启动 Worker：python -m scripts.run_worker
-4. 启动 Worker（调试）：python -m scripts.run_worker --max-loops 10
-5. 启动 API：uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
-6. 浏览器稳定性单元/集成测试：pytest -q tests/test_browser_controller.py tests/test_browser_dialog_integration.py tests/test_session_pool.py tests/test_worker_processor.py tests/test_scheduler.py
-7. 启动伪 openchat 站点：python -m scripts.run_mock_openchat --port 8010
-8. 伪 openchat 浏览器集成测试（Playwright）：RUN_UI_E2E=1 pytest -q tests/test_mock_openchat_playwright_integration.py
-9. 伪 openchat 人工输入 E2E 验收（必须人工操作）：python -m scripts.manual_mock_openchat_e2e
-10. manual_openai_e2e 先打 mock_openai（默认）再可切真实站点：python -m scripts.manual_openai_e2e
+| 任务 | 命令 |
+| :--- | :--- |
+| **一键启动 (Docker)** | `docker-compose up -d --build` |
+| **启动主服务 (Local)** | `python3 -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000` |
+| **初始化数据库** | `python3 scripts/init_db.py` |
+| **运行单元测试** | `pytest tests/` |
+| **查看 API 文档** | 启动后访问 `/docs` |
+
+更多详细安装说明请参考 [INSTALL.md](INSTALL.md)。
 
 ## 测试策略（当前建议）
 

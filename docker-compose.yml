@@ -1,0 +1,13 @@
+services:
+  api:
+    build: .
+    container_name: ai-free-chatbot-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    command: python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    restart: always
