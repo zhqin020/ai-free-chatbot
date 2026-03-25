@@ -75,18 +75,18 @@ body.admin-shell-body {
 }
 
 .admin-content {
-	padding: 24px;
+	padding: 16px 24px;
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
-	align-items: center; /* Center horizontally */
+	align-items: flex-start; /* Left-aligned for maximum space */
 }
 
 .admin-content .page,
 .admin-content .shell {
 	margin: 0;
 	width: 100%;
-	max-width: 1200px;
+	max-width: none; /* Allow full-width expansion */
 }
 
 @media (max-width: 980px) {

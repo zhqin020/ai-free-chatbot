@@ -136,19 +136,6 @@ _WORKER_LOG_FILE = _LOG_DIR / "worker-managed.log"
 _STATE_LOCK = threading.Lock()
 
 
-class WorkerStatusResponse(BaseModel):
-    running: bool
-    pid: int | None = None
-    managed_by_api: bool = False
-    started_at: datetime | None = None
-    uptime_seconds: int | None = None
-    command: str | None = None
-    message: str | None = None
-
-
-class WorkerActionResponse(BaseModel):
-    action: str
-    status: WorkerStatusResponse
 
 
 

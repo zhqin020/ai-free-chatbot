@@ -136,6 +136,10 @@ def create_app() -> FastAPI:
     def admin_settings() -> FileResponse:
         return FileResponse(static_dir / "admin-settings.html")
 
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return FileResponse(static_dir / "favicon.png")
+
     @app.get("/admin/query", include_in_schema=False)
     def admin_query() -> FileResponse:
         return FileResponse(static_dir / "admin-query.html")
@@ -144,9 +148,6 @@ def create_app() -> FastAPI:
     def admin_test_extract() -> FileResponse:
         return FileResponse(static_dir / "admin-test-extract.html")
 
-    @app.get("/admin/worker", include_in_schema=False)
-    def admin_worker() -> FileResponse:
-        return FileResponse(static_dir / "admin-worker.html")
 
     @app.get("/admin/mock-openai", include_in_schema=False)
     def admin_mock_openai() -> FileResponse:

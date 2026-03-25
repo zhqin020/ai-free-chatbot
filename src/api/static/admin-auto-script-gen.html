@@ -6,65 +6,131 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<title>自动脚本生成 - 管理后台</title>
 	<link rel="stylesheet" href="/ui/admin-shell.css" />
+	<link rel="icon" href="/ui/favicon.png" type="image/png" />
 	<style>
 		.container {
-			max-width: 900px;
-			margin: 32px auto;
+			width: 100%;
+			margin: 0;
 			background: #fff;
 			border-radius: 8px;
-			box-shadow: 0 2px 8px #0001;
-			padding: 32px;
+			box-shadow: 0 4px 12px #0001;
+			padding: 24px;
 		}
 
-		h1 {
-			margin-top: 0;
+		.workspace {
+			display: flex;
+			gap: 24px;
+			align-items: stretch;
+		}
+
+		.pane-left {
+			flex: 1;
+			min-width: 450px;
+		}
+
+		.pane-right {
+			flex: 1.2;
+			display: flex;
+			flex-direction: column;
+			min-width: 450px;
 		}
 
 		.section {
-			margin-bottom: 32px;
+			margin-bottom: 24px;
 		}
 
 		label {
-			font-weight: bold;
+			font-weight: 600;
 			display: block;
-			margin-bottom: 8px;
-		}
-
-		textarea,
-		input[type="text"] {
-			width: 100%;
-			font-size: 1em;
-			padding: 8px;
-			margin-bottom: 8px;
-			border-radius: 4px;
-			border: 1px solid #ccc;
+			margin-bottom: 12px;
+			color: #33445f;
+			font-size: 1.1em;
 		}
 
 		textarea {
-			min-height: 60px;
+			width: 100%;
+			font-family: 'Cascadia Code', 'Fira Code', monospace;
+			font-size: 0.95em;
+			padding: 12px;
+			border-radius: 6px;
+			border: 1px solid #ddd;
+			background: #fdfdfd;
+			resize: vertical;
+			transition: border-color 0.2s;
+			box-sizing: border-box;
+		}
+
+		textarea:focus {
+			border-color: #409eff;
+			outline: none;
+		}
+
+		#prompt {
+			min-height: 100px;
+		}
+
+		#ret_json {
+			min-height: 500px;
+		}
+
+		.action-bar {
+			display: flex;
+			gap: 12px;
+			margin-bottom: 12px;
+			align-items: center;
 		}
 
 		pre {
-			background: #222;
-			color: #eee;
-			padding: 16px;
+			background: #1e1e1e;
+			color: #d4d4d4;
+			padding: 20px;
 			border-radius: 6px;
-			overflow-x: auto;
+			overflow: auto;
 			font-size: 0.95em;
+			flex: 1;
+			margin: 0;
+			border: 1px solid #333;
+			line-height: 1.5;
+			font-family: 'Cascadia Code', 'Fira Code', monospace;
 		}
 
 		button {
-			padding: 6px 16px;
+			padding: 8px 20px;
 			border: none;
-			border-radius: 4px;
+			border-radius: 6px;
 			background: #409eff;
 			color: #fff;
+			font-weight: 600;
 			cursor: pointer;
-			margin-top: 8px;
+			transition: all 0.2s;
+			box-shadow: 0 2px 4px #0002;
+		}
+
+		button.secondary {
+			background: #67c23a;
+		}
+
+		button:hover {
+			background: #66b1ff;
+			transform: translateY(-1px);
+			box-shadow: 0 4px 8px #0002;
+		}
+
+		button.secondary:hover {
+			background: #85ce61;
 		}
 
 		button:active {
-			background: #3076c9;
+			transform: translateY(0);
+		}
+
+		@media (max-width: 1100px) {
+			.workspace {
+				flex-direction: column;
+			}
+			.pane-left, .pane-right {
+				min-width: 100%;
+			}
 		}
 	</style>
 </head>
@@ -78,7 +144,6 @@
 				<a href="/admin">概览</a>
 				<a href="/admin/settings">Provider</a>
 				<a href="/admin/sessions">会话</a>
-				<a href="/admin/worker">Worker</a>
 				<a href="/admin/mock-openai">Mock OpenAI</a>
 				<a href="/admin/test-extract">测试提取</a>
 				<a href="/admin/query">查询</a>
@@ -93,34 +158,42 @@
 					<p class="lead">根据输入 prompt 和 JSON 模板自动生成 Python 脚本函数。</p>
 				</header>
 				<div class="container">
-					<div class="section">
-						<label for="prompt">Prompt（提取指令）</label>
-						<textarea id="prompt" placeholder="请输入提取指令...">请提取案件状态、判决结果和关键时间节点为 JSON。</textarea>
-					</div>
-					<div class="section">
-						<label for="ret_json">目标 JSON 模板</label>
-						<textarea id="ret_json" placeholder="可直接粘贴/编辑 JSON 字符串...">{
-  "case_id": "IMM-####-##(from document)",
-  "case_type": "Mandamus|Other",
-  "case_status": "Closed|On-Going",
-  "judgment_result": "leave|grant|dismiss",
-  "hearing": "true|false",
-  "timeline": {
-    "filing_date": "YYYY-MM-DD",
-    "Applicant_file_completed": "YYYY-MM-DD",
-    "reply_memo": "YYYY-MM-DD",
-    "Sent_to_Court": "YYYY-MM-DD",
-    "judgment_date": "YYYY-MM-DD"
-  }
+					<div class="workspace">
+						<div class="pane-left">
+							<div class="section">
+								<label for="prompt">Prompt（提取指令）</label>
+								<textarea id="prompt" placeholder="请输入提取指令...">Extract the specified legal status, judgment result, and key timeline nodes from the provided document. Return the result strictly as a single JSON object matching the following schema: <ret_json_template>. Deliver only the JSON with no additional commentary. Use null for fields that cannot be extracted.</textarea>
+							</div>
+							<div class="section">
+								<label for="ret_json">目标 JSON 模板 (Target JSON Schema)</label>
+								<textarea id="ret_json" placeholder="可直接粘贴/编辑 JSON 字符串...">{
+    "case_id": "IMM-1-24", // Docket number from the document (e.g. IMM-####-##)
+    "case_type": "Mandamus", // Options: Mandamus, Judicial Review, Other
+    "case_status": "Closed", // Options: Closed, On-Going
+    "judgment_result": "granted", // Options: granted, dismiss, leave_granted, leave_dismissed
+    "hearing": true, // boolean: Whether a personal appearance/hearing occurred
+    "timeline": {
+        "filing_date": "2024-07-31", // Application filing date (YYYY-MM-DD)
+        "appearance_date": "2024-08-09", // Respondent (DOJ) files Notice of Appearance
+        "applicant_record": "2024-09-19", // Applicant files Application Record
+        "doj_record": "2024-10-11", // Respondent (DOJ) files Application Record/Memorandum
+        "reply_memo": "2024-10-21", // Applicant submits Reply Memorandum
+        "leave_grant_date": "2025-02-07", // Court grants leave for judicial review
+        "certified_record": "2025-02-26", // IRCC sends certified record (pursuant to Court order)
+        "hearing_date": "2025-05-01", // Date of the oral hearing (Zoom or personal appearance)
+        "judgment_date": "2025-05-01" // Final judgment/decision date
+    }
 }</textarea>
-					</div>
-					<div class="section">
-						<label>生成的 Python 函数代码</label>
-						<pre id="code"></pre>
-						<button onclick="copyCode()">一键复制</button>
-					</div>
-					<div class="section">
-						<button onclick="saveContent()">保存</button>
+							</div>
+						</div>
+						<div class="pane-right">
+							<div class="action-bar">
+								<label style="margin: 0; flex: 1;">生成的 Python 函数代码 (Auto-Generated Code)</label>
+								<button onclick="copyCode()">一键复制 (Copy Code)</button>
+								<button class="secondary" onclick="saveContent()">保存配置 (Save Layout)</button>
+							</div>
+							<pre id="code"></pre>
+						</div>
 					</div>
 				</div>
 			</main>
@@ -128,7 +201,7 @@
 	</div>
 	<script>
 		function escapeForTripleQuotes(str) {
-			return str.replace(/'''/g, "'''");
+			return str.replace(/'''/g, "\\'''");
 		}
 		function updateCode() {
 			const prompt = document.getElementById('prompt').value.trim();
@@ -147,26 +220,13 @@
 			const ret_json = document.getElementById('ret_json').value;
 			localStorage.setItem('auto_script_gen_prompt', prompt);
 			localStorage.setItem('auto_script_gen_ret_json', ret_json);
-			alert('已保存！');
+			alert('配置已成功保存到本地缓存！');
 		}
 		function loadContent() {
 			const prompt = localStorage.getItem('auto_script_gen_prompt');
 			const ret_json = localStorage.getItem('auto_script_gen_ret_json');
-			document.getElementById('prompt').value = prompt || '请提取案件状态、判决结果和关键时间节点为 JSON。';
-			document.getElementById('ret_json').value = ret_json || `{
-  "case_id": "IMM-####-##(from document)",
-  "case_type": "Mandamus|Other",
-  "case_status": "Closed|On-Going",
-  "judgment_result": "leave|grant|dismiss",
-  "hearing": "true|false",
-  "timeline": {
-    "filing_date": "YYYY-MM-DD",
-    "Applicant_file_completed": "YYYY-MM-DD",
-    "reply_memo": "YYYY-MM-DD",
-    "Sent_to_Court": "YYYY-MM-DD",
-    "judgment_date": "YYYY-MM-DD"
-  }
-}`;
+			if (prompt) document.getElementById('prompt').value = prompt;
+			if (ret_json) document.getElementById('ret_json').value = ret_json;
 		}
 		document.getElementById('prompt').addEventListener('input', updateCode);
 		document.getElementById('ret_json').addEventListener('input', updateCode);
