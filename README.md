@@ -29,14 +29,11 @@ docker-compose up -d --build
     pip install -r requirements.txt
     playwright install chromium --with-deps
     ```
-2.  **初始化数据库**:
+2.  **启动服务**:
     ```bash
-    python3 scripts/init_db.py
+    ./scripts/start.sh
     ```
-3.  **启动主服务**:
-    ```bash
-    python3 -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000
-    ```
+    *(该脚本会自动重连 Conda 环境、初始化数据库并启动主服务)*
 
 ---
 
