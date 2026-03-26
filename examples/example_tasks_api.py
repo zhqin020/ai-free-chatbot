@@ -16,7 +16,6 @@ def main() -> None:
                 "external_id": "ext-demo-001",
                 "prompt": "Please extract legal milestones as JSON.",
                 "document_text": "A sample legal document text goes here.",
-                "provider_hint": "openchat",
             },
         )
         pretty_print("create task", created)

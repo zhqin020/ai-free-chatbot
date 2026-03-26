@@ -15,11 +15,9 @@ class TestExtractRequest(BaseModel):
     prompt: str = Field(min_length=1)
     document_text: str = Field(min_length=1)
     raw_response: str = Field(min_length=1)
-    provider_hint: str | None = None
 
 
 class TestExtractResponse(BaseModel):
-    provider_hint: str | None = None
     generated_prompt: str
     raw_response: str
     valid: bool
@@ -66,7 +64,6 @@ def extract_handler(payload: TestExtractRequest) -> TestExtractResponse:
         )
 
     return TestExtractResponse(
-        provider_hint=payload.provider_hint,
         generated_prompt=generated_prompt,
         raw_response=payload.raw_response,
         valid=True,

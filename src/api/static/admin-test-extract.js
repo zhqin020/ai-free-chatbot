@@ -138,15 +138,6 @@ function renderErrors(errors) {
 }
 
 function readPayload() {
-	const provider = nodes.providerHint.value;
-	const payload = {
-		prompt: nodes.prompt.value.trim(),
-		document_text: nodes.documentText.value.trim(),
-		raw_response: nodes.rawResponse.value.trim(),
-	};
-	if (provider) {
-		payload.provider_hint = provider;
-	}
 	return payload;
 }
 
@@ -166,7 +157,6 @@ function looksLikeTemplatePlaceholder(text) {
 }
 
 function fillSample() {
-	nodes.providerHint.value = "openchat";
 	nodes.prompt.value = PROMPT_TEMPLATE;
 	nodes.documentText.value = DOCUMENT_EXAMPLE;
 	nodes.rawResponse.value = RAW_RESPONSE_EXAMPLE;
@@ -174,7 +164,6 @@ function fillSample() {
 }
 
 function clearAll() {
-	nodes.providerHint.value = "";
 	nodes.prompt.value = "";
 	nodes.documentText.value = "";
 	nodes.rawResponse.value = "";
